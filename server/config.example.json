@@ -1,0 +1,15 @@
+{
+  "port": 8643,
+  "iwaraToken": "",
+  "downloadBackend": "direct",
+  "concurrency": 3,
+  "aria2Path": "http://127.0.0.1:6800/jsonrpc",
+  "aria2Token": "",
+  "downloadPath": "",
+  "fileNameTemplate": "Iwara_-_{TITLE}_[{ID}]_[{QUALITY}].mp4",
+  "useAuthorSubdir": true,
+  "passwordSalt": "",
+  "passwordHash": "",
+  "sessionHours": 72,
+  "checkDownloadLink": false
+}

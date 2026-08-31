@@ -1,0 +1,41 @@
+/* iwara-downloader-server 前端样式（浅色简洁风格） */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font: 14px/1.6 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; background: #f6f7f9; color: #222; }
+header { display: flex; align-items: center; gap: 20px; padding: 12px 24px; background: #fff; border-bottom: 1px solid #e2e5ea; position: sticky; top: 0; z-index: 10; }
+header h1 { font-size: 18px; margin: 0; }
+nav { display: flex; gap: 4px; }
+nav button { padding: 6px 14px; border: 1px solid #d6dae1; background: #fff; border-radius: 6px; cursor: pointer; font-size: 13px; }
+nav button.active { background: #2f6fed; color: #fff; border-color: #2f6fed; }
+#conn { margin-left: auto; font-size: 12px; color: #7a8494; }
+main { max-width: 1100px; margin: 20px auto; padding: 0 16px; }
+.tab { display: none; }
+.tab.active { display: block; }
+h2 { font-size: 16px; margin: 0 0 10px; }
+.hint { color: #7a8494; font-size: 12px; margin-bottom: 10px; }
+.row { display: flex; align-items: center; gap: 8px; margin: 10px 0; flex-wrap: wrap; }
+button { padding: 6px 14px; border: 1px solid #c9cfd8; background: #fff; border-radius: 6px; cursor: pointer; }
+button.primary { background: #2f6fed; border-color: #2f6fed; color: #fff; }
+button:hover { filter: brightness(0.97); }
+textarea, input, select { padding: 6px 8px; border: 1px solid #c9cfd8; border-radius: 6px; font: inherit; }
+textarea { width: 100%; font-family: ui-monospace, Consolas, monospace; }
+.fb { font-size: 13px; color: #2f6fed; }
+table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; }
+th, td { padding: 7px 10px; border-bottom: 1px solid #edf0f4; text-align: left; font-size: 13px; }
+th { background: #fafbfc; color: #5a6472; font-weight: 600; }
+td.id { font-family: ui-monospace, Consolas, monospace; color: #2f6fed; }
+.hidden { display: none; }
+.summary { padding: 8px 12px; background: #eef4ff; border-radius: 6px; margin: 10px 0; font-size: 13px; }
+.form label { display: block; margin: 8px 0; }
+.form input[type=text], .form input[type=password], .form input:not([type]), .form select { width: 100%; max-width: 560px; }
+.form .block textarea { max-width: 560px; }
+.result { margin-top: 10px; padding: 10px 14px; border-radius: 6px; background: #f0f4f9; font-size: 13px; white-space: pre-wrap; }
+.result.ok { background: #e7f6ec; }
+.result.err { background: #fdecec; }
+.prog { background: #edf0f4; border-radius: 4px; height: 8px; width: 120px; display: inline-block; vertical-align: middle; }
+.prog i { display: block; height: 8px; background: #2f6fed; border-radius: 4px; }
+.state-done { color: #1a9d4b; }
+.state-failed, .state-error { color: #d0392f; }
+.state-downloading { color: #2f6fed; }
+.state-pending { color: #8a94a3; }
+hr { border: none; border-top: 1px solid #e2e5ea; margin: 14px 0; }
+code { background: #eef1f5; padding: 1px 5px; border-radius: 4px; }

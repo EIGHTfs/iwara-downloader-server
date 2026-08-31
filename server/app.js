@@ -1,0 +1,334 @@
+// ============================================================
+// iwara-downloader-server - HTTP 入口（零依赖，参考 gbmd app.js）
+// 路由：登录/设置/iwara 检测/视频列表/下载任务 + 静态前端
+// ============================================================
+"use strict";
+
+const http = require("http");
+const fs = require("fs");
+const path = require("path");
+const urlMod = require("url");
+
+const cfg = require("./config");
+const auth = require("./auth");
+const api = require("./lib/iwara-api");
+const downloader = require("./lib/downloader");
+
+const PUBLIC_DIR = path.join(__dirname, "public");
+const MIME = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".png": "image/png",
+  ".svg": "image/svg+xml",
+  ".ico": "image/x-icon"
+};
+
+// ---------- 命令行：设置密码 / 端口 ----------
+if (process.argv.includes("--set-password")) {
+  const idx = process.argv.indexOf("--set-password");
+  const pwd = process.argv[idx + 1];
+  if (!pwd) { console.error('用法: node app.js --set-password "你的密码"'); process.exit(1); }
+  cfg.setPassword(pwd);
+  console.log("密码已设置（scrypt 哈希存入 config.json）");
+  process.exit(0);
+}
+let CLI_PORT = null;
+{
+  const idx = process.argv.indexOf("--port");
+  if (idx >= 0 && process.argv[idx + 1]) CLI_PORT = parseInt(process.argv[idx + 1], 10);
+}
+
+// ---------- 工具 ----------
+function sendJson(res, status, obj) {
+  const body = JSON.stringify(obj);
+  res.writeHead(status, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Content-Length": Buffer.byteLength(body),
+    "Cache-Control": "no-store"
+  });
+  res.end(body);
+}
+
+function readBody(req, limit = 10 * 1024 * 1024) {
+  return new Promise((resolve, reject) => {
+    let data = "";
+    let size = 0;
+    req.on("data", (c) => {
+      size += c.length;
+      if (size > limit) { reject(new Error("请求体过大")); req.destroy(); return; }
+      data += c;
+    });
+    req.on("end", () => {
+      try { resolve(data ? JSON.parse(data) : {}); }
+      catch (e) { reject(new Error("无效 JSON")); }
+    });
+    req.on("error", reject);
+  });
+}
+
+/**
+ * 解析油猴脚本自动复制的组合凭证文本：
+ *   Cookie=...\nToken=...\nAccessToken=...
+ * 返回 { cookie, token, accessToken }（未命中的字段为 null）；
+ * 若文本不含任何 "字段=" 行，返回 null（视为纯 Cookie 串）。
+ */
+function parseCredentialText(text) {
+  if (typeof text !== "string" || !text.trim()) return null;
+  const get = (key) => {
+    const m = text.split(/\r?\n/).find((l) => l.startsWith(key + "="));
+    if (!m) return null;
+    return m.slice(key.length + 1).trim() || "";
+  };
+  const cookie = get("Cookie");
+  const token = get("Token");
+  const accessToken = get("AccessToken");
+  const hit = /(^|\n)(Cookie|Token|AccessToken)=/.test("\n" + text);
+  if (!hit) return null; // 不是组合文本
+  return {
+    cookie: cookie === null ? null : cookie,
+    token: token === null ? null : token,
+    accessToken: accessToken === null ? null : accessToken
+  };
+}
+
+function setSessionCookie(res, token) {
+  const cfgNow = cfg.readConfig();
+  const maxAge = (cfgNow.sessionHours || 72) * 3600;
+  res.setHeader("Set-Cookie", `session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}`);
+}
+
+function requireAuth(req) {
+  const c = cfg.readConfig();
+  if (!c.passwordHash) return true;
+  return auth.isValidSession(auth.extractToken(req));
+}
+
+function serveStatic(req, res, pathname) {
+  let filePath = path.join(PUBLIC_DIR, pathname === "/" ? "index.html" : pathname);
+  if (!filePath.startsWith(PUBLIC_DIR)) { res.writeHead(403); res.end("Forbidden"); return; }
+  fs.stat(filePath, (err, st) => {
+    if (err || !st.isFile()) { res.writeHead(404); res.end("Not Found"); return; }
+    const ext = path.extname(filePath).toLowerCase();
+    const headers = { "Content-Type": MIME[ext] || "application/octet-stream" };
+    if (ext === ".html" || ext === ".js" || ext === ".css") headers["Cache-Control"] = "no-cache, no-store, must-revalidate";
+    res.writeHead(200, headers);
+    fs.createReadStream(filePath).pipe(res);
+  });
+}
+
+// ---------- 路由 ----------
+const server = http.createServer(async (req, res) => {
+  const parsed = urlMod.parse(req.url, true);
+  const pathname = parsed.pathname;
+  const method = req.method;
+
+  try {
+    // ---- 公开路由 ----
+    // 油猴脚本下载（免鉴权，手机浏览器直接打开即触发 Tampermonkey 安装）
+    if (method === "GET" && (pathname === "/userscript" || pathname === "/userscript.user.js" || pathname === "/iwara-cred-fetch.user.js")) {
+      const scriptPath = path.join(PUBLIC_DIR, "iwara-cred-fetch.user.js");
+      fs.readFile(scriptPath, (err, data) => {
+        if (err) return sendJson(res, 404, { ok: false, error: "脚本不存在" });
+        res.writeHead(200, {
+          "Content-Type": "text/javascript; charset=utf-8",
+          "Content-Disposition": "attachment; filename=iwara-cred-fetch.user.js",
+          "Cache-Control": "no-store"
+        });
+        res.end(data);
+      });
+      return;
+    }
+    // bookmarklet 源码（Edge 手机版免油猴方案，供 bookmarklet.html 加载）
+    if (method === "GET" && pathname === "/bookmarklet-src") {
+      const srcPath = path.join(PUBLIC_DIR, "..", "..", "iwara-cred.bookmarklet.js");
+      fs.readFile(srcPath, (err, data) => {
+        if (err) return sendJson(res, 404, { ok: false, error: "bookmarklet 不存在" });
+        res.writeHead(200, {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Cache-Control": "no-store"
+        });
+        res.end(data);
+      });
+      return;
+    }
+    if (method === "POST" && pathname === "/api/login") {
+      const body = await readBody(req);
+      const c = cfg.readConfig();
+      if (!c.passwordHash) {
+        const token = auth.createSession(c.sessionHours || 72);
+        setSessionCookie(res, token);
+        return sendJson(res, 200, { ok: true, noPassword: true, message: "未设置访问密码，可直接使用" });
+      }
+      if (cfg.verifyPassword(body.password || "", c.passwordHash, c.passwordSalt)) {
+        const token = auth.createSession(c.sessionHours || 72);
+        setSessionCookie(res, token);
+        return sendJson(res, 200, { ok: true });
+      }
+      return sendJson(res, 401, { ok: false, error: "密码错误" });
+    }
+    if (method === "POST" && pathname === "/api/logout") {
+      auth.destroySession(auth.extractToken(req));
+      res.setHeader("Set-Cookie", "session=; Path=/; HttpOnly; Max-Age=0");
+      return sendJson(res, 200, { ok: true });
+    }
+    if (pathname === "/api/status") {
+      const c = cfg.readConfig();
+      return sendJson(res, 200, { ok: true, needsSetup: !c.passwordHash, needsAuth: !!c.passwordHash, port: c.port || 8643 });
+    }
+
+    // ---- 需鉴权 ----
+    if (pathname.startsWith("/api/") && !requireAuth(req)) {
+      return sendJson(res, 401, { ok: false, error: "未登录" });
+    }
+
+    // ---- 设置 ----
+    if (method === "GET" && pathname === "/api/settings") {
+      const c = cfg.readConfig();
+      const { passwordHash, passwordSalt, ...safe } = c;
+      return sendJson(res, 200, { ok: true, settings: safe });
+    }
+    if (method === "POST" && pathname === "/api/settings") {
+      const body = await readBody(req);
+      const c = cfg.readConfig();
+      // 兼容油猴脚本自动复制的组合文本（多行 Cookie=.../Token=.../AccessToken=...）
+      if (typeof body.iwaraCookie === "string") {
+        const parsed = parseCredentialText(body.iwaraCookie);
+        if (parsed) {
+          if (parsed.cookie !== null) body.iwaraCookie = parsed.cookie;
+          if (parsed.token !== null) { body.iwaraToken = parsed.token; delete body.token; }
+          if (parsed.accessToken !== null && !c.iwaraAccessToken) c.iwaraAccessToken = parsed.accessToken;
+        }
+      }
+      const allowed = ["iwaraCookie", "iwaraToken", "downloadBackend", "concurrency", "aria2Path", "aria2Token", "downloadPath", "fileNameTemplate", "useAuthorSubdir", "sessionHours", "port", "checkDownloadLink"];
+      for (const k of allowed) {
+        if (body[k] !== undefined) c[k] = body[k];
+      }
+      cfg.writeConfig(c);
+      const out = cfg.readConfig();
+      return sendJson(res, 200, { ok: true, settings: out, parsedFromText: !!body.__credsParsed });
+    }
+    if (method === "POST" && pathname === "/api/change-password") {
+      const body = await readBody(req);
+      if (!body.password || String(body.password).length < 4) {
+        return sendJson(res, 400, { ok: false, error: "密码至少 4 位" });
+      }
+      cfg.setPassword(body.password);
+      return sendJson(res, 200, { ok: true });
+    }
+    // ---- 单独保存 iwaraToken（配合油猴凭证获取器推送） ----
+    if (method === "POST" && pathname === "/api/token") {
+      const body = await readBody(req);
+      if (body.iwaraToken === undefined) return sendJson(res, 400, { ok: false, error: "缺 iwaraToken" });
+      const c = cfg.readConfig();
+      c.iwaraToken = String(body.iwaraToken).trim();
+      cfg.writeConfig(c);
+      return sendJson(res, 200, { ok: true });
+    }
+
+    // ---- Iwara 检测 ----
+    if (method === "GET" && pathname === "/api/iwara-check") {
+      const c = cfg.readConfig();
+      if (!c.iwaraCookie) return sendJson(res, 200, { ok: true, cookieSet: false, checked: false, message: "未配置 Cookie" });
+      const r = await api.checkLogin();
+      return sendJson(res, 200, Object.assign({ cookieSet: true, checked: true }, r));
+    }
+
+    // ---- 视频列表 / 搜索 ----
+    if (method === "GET" && pathname === "/api/videos") {
+      const q = {
+        sort: String(parsed.query.sort || "date"),
+        page: parseInt(parsed.query.page || "0", 10),
+        limit: parseInt(parsed.query.limit || "20", 10),
+        user: String(parsed.query.user || ""),
+        search: String(parsed.query.search || ""),
+        subscribed: parsed.query.subscribed === "1"
+      };
+      try {
+        const data = await api.listVideos(q);
+        return sendJson(res, 200, { ok: true, count: data.count, page: data.page, limit: data.limit, results: data.results });
+      } catch (e) {
+        return sendJson(res, 200, { ok: false, error: String(e.message || e), hint: String(e.message || "").startsWith("CF_CHALLENGE") ? "Cookie 未通过 Cloudflare 挑战：请在设置中更新（需含 cf_clearance）" : "" });
+      }
+    }
+    // 解析单个视频（拿直链/文件名预览）
+    if (method === "GET" && pathname === "/api/video-info") {
+      const id = String(parsed.query.id || "").trim();
+      if (!id) return sendJson(res, 400, { ok: false, error: "缺 id" });
+      try {
+        const info = await api.getVideoInfo(id);
+        return sendJson(res, 200, { ok: true, ...info });
+      } catch (e) {
+        return sendJson(res, 200, { ok: false, error: String(e.message || e), hint: String(e.message || "").startsWith("CF_CHALLENGE") ? "Cookie 未通过 Cloudflare 挑战" : "" });
+      }
+    }
+
+    // ---- 下载任务 ----
+    if (method === "GET" && pathname === "/api/task") {
+      return sendJson(res, 200, { ok: true, task: downloader.getTask() });
+    }
+    if (method === "POST" && pathname === "/api/download") {
+      const body = await readBody(req);
+      const items = body.items || [];
+      if (!Array.isArray(items) || items.length === 0) return sendJson(res, 400, { ok: false, error: "无下载项" });
+      try {
+        const r = await downloader.startDownloadTask(items);
+        return sendJson(res, 200, r);
+      } catch (e) {
+        return sendJson(res, 400, { ok: false, error: String(e.message || e) });
+      }
+    }
+    if (method === "POST" && pathname === "/api/task/pause") { return sendJson(res, 200, { ok: true, status: downloader.pauseTask() }); }
+    if (method === "POST" && pathname === "/api/task/resume") { return sendJson(res, 200, { ok: true, status: downloader.resumeTask() }); }
+    if (method === "POST" && pathname === "/api/task/stop") { return sendJson(res, 200, { ok: true, status: downloader.stopTask() }); }
+    if (method === "POST" && pathname === "/api/task/retry") { return sendJson(res, 200, { ok: true, retried: downloader.retryFailed() }); }
+    if (method === "POST" && pathname === "/api/task/concurrency") {
+      const body = await readBody(req);
+      return sendJson(res, 200, { ok: true, concurrency: downloader.setConcurrency(body.n) });
+    }
+
+    // ---- 静态 ----
+    if (method === "GET") return serveStatic(req, res, pathname);
+    return sendJson(res, 405, { ok: false, error: "方法不允许" });
+  } catch (e) {
+    return sendJson(res, 500, { ok: false, error: String(e.message || e) });
+  }
+});
+
+// ---------- 启动 ----------
+(async function start() {
+  // 端口优先级：--port 命令行 > PORT 环境变量 > config.json；被占用自动换随机端口
+  let preferred = CLI_PORT || (process.env.PORT ? parseInt(process.env.PORT, 10) : null) || cfg.readConfig().port || 8643;
+  const finalPort = await new Promise((resolve) => {
+    const net = require("net");
+    const srv = net.createServer();
+    const tryListen = (port) => {
+      srv.once("error", () => {
+        const rnd = 20000 + Math.floor(Math.random() * 10000);
+        tryListen(rnd);
+      });
+      srv.listen(port, () => {
+        const p = srv.address().port;
+        srv.close(() => resolve(p));
+      });
+    };
+    tryListen(preferred);
+  });
+
+  const cfgNow = cfg.readConfig();
+  cfgNow.port = finalPort;
+  cfg.writeConfig(cfgNow);
+
+  auth.loadSessions();
+  downloader.restorePendingTask();
+
+  server.listen(finalPort, "0.0.0.0", () => {
+    console.log("==============================================");
+    console.log("iwara-downloader-server 已启动");
+    console.log(`  本机访问: http://127.0.0.1:${finalPort}`);
+    console.log(`  局域网访问: http://<本机IP>:${finalPort}`);
+    if (!cfg.hasPassword()) console.log('  ⚠️ 未设置密码！可运行: node app.js --set-password "你的密码"');
+    console.log("==============================================");
+  });
+})();

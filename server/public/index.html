@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>iwara-downloader-server</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>🌐 iwara-downloader</h1>
+  <nav id="tabs">
+    <button data-tab="download" class="active">⬇ 下载</button>
+    <button data-tab="progress">📊 进度</button>
+    <button data-tab="search">🔍 搜索</button>
+    <button data-tab="settings">⚙ 设置</button>
+  </nav>
+  <span id="userscript-link" style="position:relative">
+    <a href="/userscript" id="btn-userscript" style="color:#2f6fed;font-size:13px;text-decoration:none;border:1px solid #c9dcff;padding:5px 10px;border-radius:6px;background:#eef4ff">📥 手机油猴脚本</a>
+  </span>
+  <span id="conn"></span>
+</header>
+
+<main>
+  <!-- 下载 -->
+  <section id="tab-download" class="tab active">
+    <h2>批量下载</h2>
+    <p class="hint">输入视频 ID 或完整链接，每行一个，然后点「预解析」查看直链，或直接「开始下载」。</p>
+    <textarea id="dl-input" rows="10" placeholder="例如：&#10;iwara.tv/video/xxxxxx&#10;xxxxxx"></textarea>
+    <div class="row">
+      <button id="btn-preview">🔎 预解析</button>
+      <button id="btn-dl" class="primary">⬇ 开始下载</button>
+      <span id="dl-feedback" class="fb"></span>
+    </div>
+    <table id="preview-table" class="hidden">
+      <thead><tr><th></th><th>ID</th><th>标题</th><th>作者</th><th>质量</th><th>文件名</th><th>状态</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <!-- 进度 -->
+  <section id="tab-progress" class="tab">
+    <h2>下载进度</h2>
+    <div class="row">
+      <button id="btn-pause">⏸ 暂停</button>
+      <button id="btn-resume">▶ 恢复</button>
+      <button id="btn-stop">⏹ 停止</button>
+      <button id="btn-retry">🔁 重试失败</button>
+      <label>并发 <input id="concurrency" type="number" min="1" max="8" value="3" style="width:60px"></label>
+      <button id="btn-setconc">设置</button>
+    </div>
+    <div id="task-summary" class="summary"></div>
+    <div id="task-list"></div>
+  </section>
+
+  <!-- 搜索 -->
+  <section id="tab-search" class="tab">
+    <h2>视频搜索</h2>
+    <div class="row">
+      <input id="search-keyword" placeholder="关键词（如：奥黛塔），留空则按下方排序拉取" style="width:240px">
+      <select id="search-type">
+        <option value="date">最新</option>
+        <option value="trending">热门</option>
+        <option value="views">观看最多</option>
+      </select>
+      <input id="search-user" placeholder="用户名（可选，限该用户视频）" style="width:200px">
+      <button id="btn-search">🔍 搜索</button>
+      <button id="btn-sel-all">全选</button>
+      <button id="btn-dl-sel" class="primary">⬇ 下载选中</button>
+    </div>
+    <table id="search-table">
+      <thead><tr><th></th><th>ID</th><th>标题</th><th>作者</th><th>上传时间</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <!-- 设置 -->
+  <section id="tab-settings" class="tab">
+    <h2>设置</h2>
+    <div class="form">
+      <label>访问密码保护：
+        <input id="set-password" type="password" placeholder="设置/修改密码（至少4位）">
+        <button id="btn-setpwd">保存</button>
+      </label>
+      <hr>
+      <label>下载根目录：
+        <input id="set-downloadPath" placeholder="/vol1/媒体/Iwara">
+        <span class="hint">视频存为 <code>&lt;root&gt;/&lt;作者&gt;/&lt;原始文件名&gt;</code></span>
+      </label>
+      <label>作者子目录：
+        <select id="set-useAuthorSubdir"><option value="true">是</option><option value="false">否（直接存根目录）</option></select>
+      </label>
+      <label>下载后端：
+        <select id="set-downloadBackend">
+          <option value="direct">直连（Node 下载，断点续传）</option>
+          <option value="aria2">Aria2（需本地 Aria2 RPC）</option>
+        </select>
+      </label>
+      <label>并发数：<input id="set-concurrency" type="number" min="1" max="8" style="width:70px"></label>
+      <label>Aria2 RPC：<input id="set-aria2Path" placeholder="http://127.0.0.1:6800/jsonrpc"></label>
+      <label>Aria2 Token：<input id="set-aria2Token" type="password"></label>
+      <hr>
+      <label class="block">Iwara Cookie（含 cf_clearance，从浏览器复制最新 Cookie）：
+        <textarea id="set-iwaraCookie" rows="4" placeholder="cf_clearance=...; token=...; _ga=...&#10;&#10;也可直接粘贴油猴脚本自动复制的组合文本：&#10;Cookie=...&#10;Token=...&#10;AccessToken=..."></textarea>
+      </label>
+      <div class="row">
+        <button id="btn-save-settings" class="primary">💾 保存设置</button>
+        <button id="btn-iwara-check">🩺 检测 iwara 登录态</button>
+        <span id="settings-feedback" class="fb"></span>
+      </div>
+      <div id="iwara-check-result" class="result hidden"></div>
+    </div>
+  </section>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>
