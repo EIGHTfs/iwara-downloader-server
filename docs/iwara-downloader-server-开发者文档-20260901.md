@@ -31,10 +31,10 @@
 iwara-downloader-server/
 ├── start.sh / stop.sh / restart.sh / status.sh
 ├── scripts/git-push.sh                 # 读项目根 .git-push-token 推 origin + tags
+├── scripts/iwara-cred-fetch.user.js    # 油猴脚本（凭证 + 一键发送 /api/receive）
 ├── userdata-manifest.json              # 用户数据清单（备份/恢复按此收集）
 ├── TROUBLESHOOTING.md                  # 踩坑：UA / IP 直连 / DNS / 链接过期 / aria2
 ├── docs/                               # 开发者文档（本文件）
-├── iwara-cred-fetch.user.js            # 油猴凭证采集（根目录副本）
 ├── iwara-cred.bookmarklet.js           # 书签方案
 └── server/
     ├── app.js                          # HTTP 入口 + 全部 API 路由
@@ -55,8 +55,7 @@ iwara-downloader-server/
     │   └── data-backup.js              # zip 备份/恢复（对照 gbmd）
     └── public/                         # 网页前端（骨架来自 gbmd docs/ui-template）
         ├── index.html / app.js / style.css / favicon.png
-        ├── login.html
-        └── iwara-cred-fetch.user.js
+        └── login.html
 ```
 
 ---
@@ -100,6 +99,7 @@ cd /path/to/iwara-downloader-server
 | POST | `/api/search/clear` | 是 | 清缓存 |
 | GET | `/api/video-info` | 是 | 解析单视频直链 |
 | POST | `/api/download` | 是 | 提交下载任务 |
+| POST | `/api/receive` | 是 | 油猴专用接收口（规整后转发给 `/api/download`） |
 | GET | `/api/task` | 是 | 查询任务状态 |
 | POST | `/api/task/pause` | 是 | 暂停 |
 | POST | `/api/task/resume` | 是 | 继续 |
@@ -395,6 +395,18 @@ X-Version：`SHA1([pathname末段, expires, 密钥].join('_'))`，密钥 `mSvL05
 - **每次下载都重新 `getVideoInfo`**，禁止复用旧 URL。
 
 前端批量框：每行一个完整链接或纯 ID，`parseVideoIds` 抽出 `iwara.tv/video/<id>`。
+
+油猴脚本 `POST /api/download` 也可传字符串数组（完整链接或纯 ID）。
+
+### POST /api/receive
+
+油猴脚本专用。需登录。**不自己解析**，只把 body 规整成 `{ items }` 后走 `/api/download` 同一处理：
+
+```json
+{ "url": "https://www.iwara.tv/video/KzQf3RIaBEf5vL" }
+```
+
+也接受 `{ urls: [...] }` / `{ items: [...] }` / `{ text: "每行一个链接" }`。返回 `{ ok, total, received }`。
 
 ### GET /api/task
 

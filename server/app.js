@@ -97,6 +97,29 @@ function parseCredentialText(text) {
   };
 }
 
+/**
+ * 解析下载项：支持字符串（完整 iwara.tv 链接 / 纯 ID）与对象（{ id|url|title|author }）。
+ * 返回标准化 items 数组；解析不出 id 的项被丢弃。
+ */
+function parseDownloadItems(rawItems) {
+  if (!Array.isArray(rawItems)) return [];
+  const items = rawItems
+    .map((it) => {
+      if (typeof it === "string") it = { url: it };
+      if (!it || typeof it !== "object") return null;
+      let id = String(it.id || "").trim();
+      const url = String(it.url || "").trim();
+      if (!id && url) {
+        const m = url.match(/\/(?:video|v)\/([\w-]+)/i);
+        id = m ? m[1] : url.replace(/^https?:\/\/[^/]+\//, "").split("?")[0].trim();
+      }
+      if (!/^[\w-]+$/.test(id)) return null;
+      return Object.assign({}, it, { id, url });
+    })
+    .filter(Boolean);
+  return items;
+}
+
 function setSessionCookie(res, token) {
   const cfgNow = cfg.readConfig();
   const maxAge = (cfgNow.sessionHours || 72) * 3600;
@@ -141,7 +164,13 @@ const server = http.createServer(async (req, res) => {
     // ---- 公开路由 ----
     // 油猴脚本下载（免鉴权，手机浏览器直接打开即触发 Tampermonkey 安装）
     if (method === "GET" && (pathname === "/userscript" || pathname === "/userscript.user.js" || pathname === "/iwara-cred-fetch.user.js")) {
-      const scriptPath = path.join(PUBLIC_DIR, "iwara-cred-fetch.user.js");
+      const scriptCandidates = [
+        path.join(__dirname, "..", "scripts", "iwara-cred-fetch.user.js"),
+        path.join(process.cwd(), "..", "scripts", "iwara-cred-fetch.user.js"),
+        path.join(process.cwd(), "scripts", "iwara-cred-fetch.user.js")
+      ];
+      const scriptPath = scriptCandidates.find((p) => fs.existsSync(p));
+      if (!scriptPath) return sendJson(res, 404, { ok: false, error: "脚本不存在" });
       fs.readFile(scriptPath, (err, data) => {
         if (err) return sendJson(res, 404, { ok: false, error: "脚本不存在" });
         res.writeHead(200, {
@@ -398,28 +427,27 @@ const server = http.createServer(async (req, res) => {
     if (method === "GET" && pathname === "/api/task") {
       return sendJson(res, 200, { ok: true, task: downloader.getTask() });
     }
-    if (method === "POST" && pathname === "/api/download") {
+    // /api/download：唯一解析入口（parseDownloadItems）
+    // /api/receive：油猴脚本专用接收口，只规整 body 形态，解析/下载全部转发给 /api/download 的处理
+    if (method === "POST" && (pathname === "/api/download" || pathname === "/api/receive")) {
       const body = await readBody(req);
+      if (pathname === "/api/receive") {
+        // 支持 { items:[...] } / { url } / { urls:[...] } / { text:"每行一个链接" }，一律规整成 items
+        let rawItems = body.items;
+        if (!rawItems && typeof body.url === "string") rawItems = [body.url];
+        if (!rawItems && Array.isArray(body.urls)) rawItems = body.urls;
+        if (!rawItems && typeof body.text === "string") rawItems = body.text.split(/\r?\n/);
+        if (typeof rawItems === "string") rawItems = [rawItems];
+        body.items = rawItems;
+      }
       const rawItems = body.items || [];
       if (!Array.isArray(rawItems) || rawItems.length === 0) return sendJson(res, 400, { ok: false, error: "无下载项" });
       // 兼容油猴脚本「发送到服务器」：支持字符串（完整 iwara.tv 链接或纯 ID）与对象两种形态
-      const items = rawItems
-        .map((it) => {
-          if (typeof it === "string") it = { url: it };
-          if (!it || typeof it !== "object") return null;
-          let id = String(it.id || "").trim();
-          const url = String(it.url || "").trim();
-          if (!id && url) {
-            const m = url.match(/\/(?:video|v)\/([\w-]+)/i);
-            id = m ? m[1] : url.replace(/^https?:\/\/[^/]+\//, "").split("?")[0].trim();
-          }
-          if (!/^[\w-]+$/.test(id)) return null;
-          return Object.assign({}, it, { id, url });
-        })
-        .filter(Boolean);
+      const items = parseDownloadItems(rawItems);
       if (items.length === 0) return sendJson(res, 400, { ok: false, error: "无法识别下载项" });
       try {
         const r = await downloader.startDownloadTask(items);
+        if (pathname === "/api/receive") return sendJson(res, 200, Object.assign({ ok: true }, r, { received: items.length }));
         return sendJson(res, 200, r);
       } catch (e) {
         return sendJson(res, 400, { ok: false, error: String(e.message || e) });

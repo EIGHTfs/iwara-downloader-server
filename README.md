@@ -70,7 +70,7 @@ node server/app.js --set-password "你的密码"
 
 ```
 ├── start.sh / stop.sh / restart.sh / status.sh
-├── iwara-cred-fetch.user.js          # 油猴凭证采集
+├── scripts/iwara-cred-fetch.user.js  # 油猴凭证采集 + 一键发送
 ├── iwara-cred.bookmarklet.js         # 书签方案（手机无法跑油猴时）
 ├── userdata-manifest.json            # 用户数据文件清单（备份/恢复按此收集）
 ├── TROUBLESHOOTING.md                # 踩坑记录（UA / DNS / 链接过期）
@@ -139,7 +139,7 @@ node server/app.js --set-password "你的密码"
 
 ## 凭证获取
 
-浏览器安装 `iwara-cred-fetch.user.js`（油猴脚本）：
+浏览器安装 `scripts/iwara-cred-fetch.user.js`（或打开服务器 `/userscript`）：
 
 1. 打开并登录 [iwara.tv](https://www.iwara.tv)（等 Cloudflare 挑战完成）
 2. 点页面右下角 🎫 按钮
@@ -151,18 +151,18 @@ node server/app.js --set-password "你的密码"
 
 ## 发送到服务器（一键把视频推给服务器下载）
 
-油猴脚本（v6.2.0+）新增「📤 发送到服务器」区块：
+油猴脚本（v7.1.0+）「📤 发送到服务器」：
 
 1. 打开任意 iwara 视频页（如 `https://www.iwara.tv/video/eBTWBPRSTFkahe`）
-2. 点右下角 🎫 按钮，在「服务器」输入框填服务器地址（如 `http://10.10.10.4:28463`），点 **📤 发送**
+2. 点右下角 🎫 按钮，填服务器地址（`10.10.10.4:28463` 或 `http://10.10.10.4:28463` 均可，没写协议会自动补 `http://`），点 **📤 发送**
 3. 脚本行为：
-   - 发送前先探测 `GET /api/status` 判断服务器是否在线 → 在线则直接把**当前视频完整链接** `POST /api/download` 添加下载任务；
-   - 地址可「💾 记住地址」固化，下次打开面板自动回填并探测该服务器在线状态；
-   - 手动输入地址即用，无需扫描。
-4. 发送成功后服务器端解析链接 → 提取视频 ID → 加入下载任务并后台下载（直连或 Aria2）。
+   - 探测 `GET /api/status`；
+   - 服务器设了密码则用本地保存的服务器密码 `POST /api/login` 自动登录；
+   - 把**当前视频完整链接** `POST /api/receive`（内部转发给 `/api/download`，服务器自行解析 ID 并下载）；
+   - 地址/密码可「💾 记住地址」固化。
+4. 面板顶部按香蕉网脚本风格显示登录态：已登录 / 用户名 / 用户 id / 主页链接 / Cookie 诊断。
 
-> `/api/download` 已兼容字符串/对象两种输入：完整 iwara.tv 链接、`video/ID`、纯 ID 均可（自动提取视频 ID）。
-> 若服务器设置了访问密码：请先在浏览器登录一次服务器网页（会话 cookie 由浏览器自动携带，`GM_xmlhttpRequest` 会随请求带上），否则发送会返回 401。
+> `/api/receive` 接受 `{ url }` / `{ urls }` / `{ items }` / `{ text }`，解析只走 `/api/download` 一处。
 
 ---
 
