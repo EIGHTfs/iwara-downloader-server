@@ -7,6 +7,8 @@ const $ = (sel) => document.querySelector(sel);
 
 let settings = null;
 let searchResults = [];
+let kwResults = [];
+let followingLoaded = false;
 let taskPollTimer = null;
 let searchPollTimer = null;
 const lastBytes = new Map(); // id -> { t, bytes } 用于算速度
@@ -260,6 +262,12 @@ function bindSearch() {
   $("#kwSearchBtn").addEventListener("click", runSearch);
   $("#kwInput").addEventListener("keydown", (e) => { if (e.key === "Enter") runSearch(); });
   bindFollowingCombo();
+  if ($("#kwType")) {
+    $("#kwType").addEventListener("change", onKwTypeChange);
+    onKwTypeChange();
+  }
+  if ($("#filterNormal")) $("#filterNormal").addEventListener("change", () => { renderKwResults(); renderSearchResults(); });
+  if ($("#filterNsfw")) $("#filterNsfw").addEventListener("change", () => { renderKwResults(); renderSearchResults(); });
 
   $("#searchBtn").addEventListener("click", async () => {
     const startDate = $("#searchStart").value;
@@ -276,9 +284,7 @@ function bindSearch() {
       searchResults = [];
       renderSearchResults();
       const r = await api("/api/search", "POST", {
-        startDate, endDate, contentFilter,
-        user: $("#searchUser").value.trim(),
-        search: $("#kwInput").value.trim()
+        startDate, endDate, contentFilter
       });
       if (!r.ok) throw new Error(r.error || "启动失败");
       setStatus($("#searchStatus"), "搜索中…（后台运行，可切换标签）");
@@ -346,17 +352,27 @@ function bindSearch() {
     }
   });
 
-  $("#selectAllBtn").addEventListener("click", () => {
+  function bindSelectAll(listSel, items) {
     const wantNormal = $("#filterNormal").checked;
     const wantNsfw = $("#filterNsfw").checked;
-    document.querySelectorAll("#searchResultList input[type=checkbox]").forEach((cb) => {
+    document.querySelectorAll(listSel + " input[type=checkbox]").forEach((cb) => {
       const id = cb.dataset.id;
-      const it = searchResults.find((x) => videoId(x) === id);
+      const it = items.find((x) => videoId(x) === id);
       cb.checked = !!it && (videoNsfw(it) ? wantNsfw : wantNormal);
     });
-  });
+  }
+  $("#selectAllBtn").addEventListener("click", () => bindSelectAll("#searchResultList", searchResults));
   $("#selectNoneBtn").addEventListener("click", () => {
     document.querySelectorAll("#searchResultList input[type=checkbox]").forEach((c) => { c.checked = false; });
+  });
+  $("#kwSelectAllBtn").addEventListener("click", () => bindSelectAll("#kwResultList", kwResults));
+  $("#kwSelectNoneBtn").addEventListener("click", () => {
+    document.querySelectorAll("#kwResultList input[type=checkbox]").forEach((c) => { c.checked = false; });
+  });
+  $("#kwClearBtn").addEventListener("click", () => {
+    kwResults = [];
+    renderKwResults();
+    setStatus($("#kwStatus"), "关键词列表已清空");
   });
 
   $("#saveSearchBtn").addEventListener("click", async () => {
@@ -369,22 +385,26 @@ function bindSearch() {
     }
   });
 
-  $("#downloadSelectedBtn").addEventListener("click", async () => {
-    const ids = [...document.querySelectorAll("#searchResultList input[type=checkbox]:checked")].map((c) => c.dataset.id);
+  async function downloadFromList(listSel, items) {
+    const ids = [...document.querySelectorAll(listSel + " input[type=checkbox]:checked")].map((c) => c.dataset.id);
     if (!ids.length) { showFeedback("请先勾选", "err"); return; }
-    const items = ids.map((id) => {
-      const v = searchResults.find((x) => videoId(x) === id) || { id };
+    const payload = ids.map((id) => {
+      const v = items.find((x) => videoId(x) === id) || { id };
+      if (v && v._kind === "user") return null;
       return { id, title: v.title || v.name || "", author: videoAuthor(v) };
-    });
+    }).filter(Boolean);
+    if (!payload.length) { showFeedback("作者结果不能直接下载，请改搜视频", "err"); return; }
     try {
-      const r = await api("/api/download", "POST", { items });
+      const r = await api("/api/download", "POST", { items: payload });
       if (!r.ok) throw new Error(r.error || "启动失败");
-      showFeedback("已加入下载（" + items.length + "）", "ok");
+      showFeedback("已加入下载（" + payload.length + "）", "ok");
       switchTab("progress");
     } catch (e) {
       showFeedback(e.message, "err");
     }
-  });
+  }
+  $("#downloadSelectedBtn").addEventListener("click", () => downloadFromList("#searchResultList", searchResults));
+  $("#kwDownloadSelectedBtn").addEventListener("click", () => downloadFromList("#kwResultList", kwResults));
 }
 
 function startSearchPoll() {
@@ -412,29 +432,87 @@ function startSearchPoll() {
   searchPollTimer = setInterval(tick, 1500);
 }
 
-async function runSearch() {
-  const kw = $("#kwInput").value.trim();
-  const sort = $("#searchSort").value;
-  const user = $("#searchUser").value.trim();
-  setStatus($("#kwStatus"), "搜索中…");
+function kwType() {
+  const el = $("#kwType");
+  return (el && el.value) || "videos";
+}
+
+function onKwTypeChange() {
+  const type = kwType();
+  const input = $("#kwInput");
+  const combo = $("#kwUserCombo");
+  if (input) {
+    input.placeholder = type === "users" ? "搜作者，或从关注列表里选" : "输入关键词";
+  }
+  if (combo && type !== "users") combo.style.display = "none";
+  if (type === "users") loadFollowingUsers();
+}
+
+async function runUserVideos(username) {
+  const user = String(username || "").trim();
+  if (!user) return;
+  setStatus($("#kwStatus"), "正在拉取 @" + user + " 的视频…");
   $("#kwSearchBtn").disabled = true;
   try {
-    const qs = new URLSearchParams({ sort, page: "0", limit: "48" });
-    if (kw) qs.set("search", kw);
-    if (user) qs.set("user", user);
+    const qs = new URLSearchParams({ sort: "date", page: "0", limit: "48", user });
     const wantNormal = $("#filterNormal").checked;
     const wantNsfw = $("#filterNsfw").checked;
     if (wantNormal && !wantNsfw) qs.set("rating", "general");
     else if (!wantNormal && wantNsfw) qs.set("rating", "ecchi");
     const r = await api("/api/videos?" + qs.toString());
     if (!r.ok) throw new Error(r.error || "搜索失败");
-    searchResults = applyRatingFilter(r.results || []);
-    renderSearchResults();
-    setStatus($("#kwStatus"), "完成（" + searchResults.length + " 条）", "ok");
+    kwResults = applyRatingFilter(r.results || []);
+    renderKwResults();
+    setStatus($("#kwStatus"), "@" + user + " 的视频（" + kwResults.length + " 条）", "ok");
   } catch (e) {
     setStatus($("#kwStatus"), "失败：" + e.message, "err");
   }
   $("#kwSearchBtn").disabled = false;
+}
+
+async function runSearch() {
+  const kw = $("#kwInput").value.trim();
+  const type = kwType();
+  if (!kw) { setStatus($("#kwStatus"), type === "users" ? "请输入作者名" : "请输入关键词", "err"); return; }
+  setStatus($("#kwStatus"), "搜索中…");
+  $("#kwSearchBtn").disabled = true;
+  try {
+    const qs = new URLSearchParams({ type, page: "0", limit: "48", search: kw });
+    if (type === "users") {
+      qs.set("sort", "relevance");
+    } else {
+      qs.set("sort", "date");
+      const wantNormal = $("#filterNormal").checked;
+      const wantNsfw = $("#filterNsfw").checked;
+      if (wantNormal && !wantNsfw) qs.set("rating", "general");
+      else if (!wantNormal && wantNsfw) qs.set("rating", "ecchi");
+    }
+    const r = await api("/api/videos?" + qs.toString());
+    if (!r.ok) throw new Error(r.error || "搜索失败");
+    const rows = r.results || [];
+    kwResults = type === "users" ? rows.map(normalizeUserRow).filter(Boolean) : applyRatingFilter(rows);
+    renderKwResults();
+    setStatus($("#kwStatus"), "完成（" + kwResults.length + " 条）", "ok");
+  } catch (e) {
+    setStatus($("#kwStatus"), "失败：" + e.message, "err");
+  }
+  $("#kwSearchBtn").disabled = false;
+}
+
+function normalizeUserRow(u) {
+  if (!u) return null;
+  const user = u.user && (u.user.username || u.user.id) ? u.user : u;
+  const username = String(user.username || u.username || "").trim();
+  const id = String(user.id || u.id || username).trim();
+  if (!username && !id) return null;
+  return {
+    _kind: "user",
+    id,
+    username,
+    name: String(user.name || u.name || username),
+    title: String(user.name || u.name || username),
+    following: !!(user.following || u.following)
+  };
 }
 
 function thumbSrc(v) {
@@ -447,41 +525,82 @@ function thumbSrc(v) {
   return "";
 }
 
-function renderSearchResults() {
-  const box = $("#searchResultList");
-  const shown = applyRatingFilter(searchResults);
-  $("#resultCount").textContent = shown.length ? ("共 " + shown.length + " 条") : "";
-  if (!shown.length) { box.innerHTML = '<div class="empty">无结果</div>'; return; }
-  box.innerHTML = shown.map((v) => {
-    const author = videoAuthor(v);
-    const when = v.createdAt ? new Date(v.createdAt).toLocaleString("zh-CN", { hour12: false }) : "";
-    const tag = videoNsfw(v) ? '<span class="badge nsfw">R18</span>' : '<span class="badge normal">普通</span>';
-    const src = thumbSrc(v);
-    const img = src
-      ? `<img class="row-thumb" src="${esc(src)}" alt="" loading="lazy" onerror="this.style.display='none'">`
-      : `<div class="row-thumb" style="background:var(--card2)"></div>`;
+function resultItemHtml(v) {
+  if (v && v._kind === "user") {
+    const username = v.username || v.id;
+    const href = "https://www.iwara.tv/profile/" + encodeURIComponent(username);
+    const follow = v.following ? '<span class="badge liked">已关注</span>' : "";
     return `<div class="result-item">
-      <input type="checkbox" data-id="${esc(videoId(v))}">
-      ${img}
-      <div class="name"><b>${esc(v.title || v.name || v.id)}</b> ${tag}
-        <div class="meta">${esc(author)} · ${esc(videoId(v))} · ${esc(when)}</div>
+      <div class="row-thumb" style="background:var(--card2)"></div>
+      <div class="name"><b><a href="${esc(href)}" target="_blank" rel="noopener">${esc(v.name || username)}</a></b> ${follow}
+        <div class="meta">@${esc(username)}</div>
       </div>
+      <button class="ghost" type="button" data-search-user="${esc(username)}">搜他的视频</button>
     </div>`;
-  }).join("");
+  }
+  const author = videoAuthor(v);
+  const when = v.createdAt ? new Date(v.createdAt).toLocaleString("zh-CN", { hour12: false }) : "";
+  const tag = videoNsfw(v) ? '<span class="badge nsfw">R18</span>' : '<span class="badge normal">普通</span>';
+  const liked = (settings && settings.showLikedInSearch !== false && v.liked) ? '<span class="badge liked">❤️ 已赞</span>' : "";
+  const id = videoId(v);
+  const href = "https://www.iwara.tv/video/" + encodeURIComponent(id);
+  const src = thumbSrc(v);
+  const img = src
+    ? `<img class="row-thumb" src="${esc(src)}" alt="" loading="lazy" onerror="this.style.display='none'">`
+    : `<div class="row-thumb" style="background:var(--card2)"></div>`;
+  return `<div class="result-item">
+    <input type="checkbox" data-id="${esc(id)}" onclick="event.stopPropagation()">
+    <a href="${esc(href)}" target="_blank" rel="noopener">${img}</a>
+    <div class="name"><b><a href="${esc(href)}" target="_blank" rel="noopener">${esc(v.title || v.name || id)}</a></b> ${tag} ${liked}
+      <div class="meta">${esc(author)} · ${esc(id)} · ${esc(when)}</div>
+    </div>
+  </div>`;
+}
+
+function fillResultList(boxSel, countSel, list) {
+  const box = $(boxSel);
+  if (!box) return;
+  const shown = applyRatingFilter(list);
+  const countEl = $(countSel);
+  if (countEl) countEl.textContent = shown.length ? ("共 " + shown.length + " 条") : "";
+  if (!shown.length) { box.innerHTML = '<div class="empty">无结果</div>'; return; }
+  box.innerHTML = shown.map(resultItemHtml).join("");
+}
+
+function renderKwResults() {
+  fillResultList("#kwResultList", "#kwResultCount", kwResults);
+  const box = $("#kwResultList");
+  if (!box || box.dataset.userClickBound) return;
+  box.dataset.userClickBound = "1";
+  box.addEventListener("click", (e) => {
+    const btn = e.target.closest && e.target.closest("[data-search-user]");
+    if (!btn) return;
+    const username = btn.getAttribute("data-search-user");
+    if (!username) return;
+    if ($("#kwType")) $("#kwType").value = "videos";
+    if ($("#kwInput")) $("#kwInput").value = "";
+    onKwTypeChange();
+    runUserVideos(username);
+  });
+}
+
+function renderSearchResults() {
+  fillResultList("#searchResultList", "#resultCount", searchResults);
 }
 
 let followingUsers = [];
 function bindFollowingCombo() {
-  const input = $("#kwUserInput");
+  const input = $("#kwInput");
   const combo = $("#kwUserCombo");
   if (!input || !combo) return;
   function renderCombo(filter) {
+    if (kwType() !== "users") { combo.style.display = "none"; return; }
     const q = String(filter || "").trim().toLowerCase();
     const matched = q
       ? followingUsers.filter((u) => (u.name + " " + u.username).toLowerCase().includes(q))
       : followingUsers;
     const shown = matched.slice(0, 20);
-    if (!shown.length) { combo.innerHTML = '<div class="combo-empty">无匹配用户</div>'; combo.style.display = "block"; return; }
+    if (!shown.length) { combo.innerHTML = '<div class="combo-empty">无匹配关注</div>'; combo.style.display = "block"; return; }
     combo.innerHTML = shown.map((u) => {
       const label = u.name && u.username && u.name !== u.username ? (u.name + " · " + u.username) : (u.name || u.username);
       return `<div class="combo-item" data-v="${esc(u.username || u.id)}">${esc(label)}</div>`;
@@ -490,13 +609,15 @@ function bindFollowingCombo() {
   }
   function pickUser(username) {
     input.value = username;
-    $("#searchUser").value = username;
     combo.style.display = "none";
-    runSearch();
+    if ($("#kwType")) $("#kwType").value = "videos";
+    onKwTypeChange();
+    runUserVideos(username);
   }
-  input.addEventListener("focus", () => { if (followingUsers.length) renderCombo(input.value); });
-  input.addEventListener("input", () => renderCombo(input.value));
+  input.addEventListener("focus", () => { if (kwType() === "users" && followingUsers.length) renderCombo(input.value); });
+  input.addEventListener("input", () => { if (kwType() === "users") renderCombo(input.value); });
   input.addEventListener("keydown", (e) => {
+    if (kwType() !== "users") return;
     if (e.key === "ArrowDown") {
       const items = document.querySelectorAll("#kwUserCombo .combo-item");
       if (items.length) { e.preventDefault(); const cur = document.querySelector("#kwUserCombo .combo-item.hover") || items[0]; cur.classList.remove("hover"); (cur.nextElementSibling || items[0]).classList.add("hover"); }
@@ -513,33 +634,33 @@ function bindFollowingCombo() {
   document.addEventListener("click", (e) => {
     const item = e.target.closest && e.target.closest("#kwUserCombo .combo-item");
     if (item) { pickUser(item.dataset.v); return; }
-    if (!e.target.closest("#kwUserInput") && !e.target.closest("#kwUserCombo")) combo.style.display = "none";
+    if (!e.target.closest("#kwInput") && !e.target.closest("#kwUserCombo")) combo.style.display = "none";
   });
 }
 
 async function loadFollowingUsers() {
-  const input = $("#kwUserInput");
+  const input = $("#kwInput");
   if (!input) return;
+  if (kwType() !== "users") return;
+  if (followingLoaded && followingUsers.length) return;
   try {
     const r = await api("/api/following?limit=50");
     if (!r.ok) throw new Error(r.error || "失败");
     followingUsers = r.following || [];
+    followingLoaded = true;
     const total = r.count || followingUsers.length;
-    input.placeholder = total ? ("过滤关注用户（" + followingUsers.length + "/" + total + "）") : "无关注用户";
     const st = $("#kwStatus");
-    if (st && followingUsers.length) setStatus(st, "已加载关注用户 " + followingUsers.length + "/" + total + "（输入过滤；完整列表增量同步）", "ok");
+    if (st && followingUsers.length) setStatus(st, "已加载关注 " + followingUsers.length + "/" + total + "，输入可过滤", "ok");
     if (total > followingUsers.length) {
       api("/api/following?all=1").then((full) => {
         if (full && full.ok && Array.isArray(full.following)) {
           followingUsers = full.following;
-          const extra = full.synced ? (" · " + full.synced + (full.added ? " +" + full.added : "") + (full.fetchedPages ? " " + full.fetchedPages + "页" : "")) : "";
-          input.placeholder = "过滤 " + followingUsers.length + " 个关注";
-          if (st) setStatus(st, "关注列表 " + followingUsers.length + " / " + (full.count || followingUsers.length) + extra, "ok");
+          if (st) setStatus(st, "关注列表 " + followingUsers.length + " / " + (full.count || followingUsers.length), "ok");
         }
       }).catch(() => {});
     }
   } catch (e) {
-    input.placeholder = "未登录或加载失败";
+    followingLoaded = false;
   }
 }
 
@@ -570,8 +691,11 @@ function bindLogout() {
 function fillSettings(s) {
   settings = s || {};
   $("#set-downloadPath").value = settings.downloadPath || "";
-  $("#set-fileNameTemplate").value = settings.fileNameTemplate || "Iwara_-_{TITLE}_[{ID}]_[{QUALITY}].mp4";
+  $("#set-fileNameTemplate").value = (settings.fileNameTemplate || "Iwara_-_{TITLE}_[{ID}]_[{QUALITY}]").replace(/\.(mp4|webm|mov)$/i, "");
   $("#set-useAuthorSubdir").value = settings.useAuthorSubdir ? "true" : "false";
+  if ($("#set-showLikedInSearch")) $("#set-showLikedInSearch").checked = settings.showLikedInSearch !== false;
+  if ($("#set-autoLike")) $("#set-autoLike").checked = !!settings.autoLike;
+  if ($("#set-autoFollow")) $("#set-autoFollow").checked = !!settings.autoFollow;
   $("#set-downloadBackend").value = settings.downloadBackend || "direct";
   $("#set-concurrency").value = settings.concurrency || 3;
   $("#concurrencyInput").value = settings.concurrency || 3;
@@ -588,14 +712,58 @@ function fillSettings(s) {
   }
 }
 
+let browseTargetInput = null;
+function openBrowse(input) {
+  browseTargetInput = input;
+  $("#browseMask").style.display = "flex";
+  if ($("#browseHint")) $("#browseHint").textContent = "";
+  const start = (input && input.value && input.value.trim().startsWith("/")) ? input.value.trim() : "/";
+  loadBrowse(start);
+}
+async function loadBrowse(p) {
+  const el = $("#browsePath");
+  if (!el) return;
+  el.textContent = "读取中…";
+  let r;
+  try { r = await api("/api/browse?path=" + encodeURIComponent(p)); }
+  catch (e) { el.textContent = "读取失败: " + e.message; return; }
+  if (!r || !r.ok) { el.textContent = (r && r.error) || "读取失败"; return; }
+  el.textContent = r.path;
+  $("#browseSelect").dataset.path = r.path;
+  let html = "";
+  if (r.parent) html += `<div class="browse-item" data-path="${esc(r.parent)}">⬆ 上级目录</div>`;
+  if (!r.dirs || !r.dirs.length) html += '<div class="hint">（无子目录）</div>';
+  (r.dirs || []).forEach((d) => {
+    const full = r.path === "/" ? "/" + d : r.path + "/" + d;
+    html += `<div class="browse-item" data-path="${esc(full)}">📁 ${esc(d)}</div>`;
+  });
+  $("#browseList").innerHTML = html;
+  $("#browseList").querySelectorAll(".browse-item").forEach((el2) => {
+    el2.addEventListener("click", () => loadBrowse(el2.dataset.path));
+  });
+}
+function bindBrowse() {
+  if (!$("#browseMask")) return;
+  $("#browsePathBtn").addEventListener("click", () => openBrowse($("#set-downloadPath")));
+  $("#browseClose").addEventListener("click", () => { $("#browseMask").style.display = "none"; });
+  $("#browseMask").addEventListener("click", (e) => { if (e.target === $("#browseMask")) $("#browseMask").style.display = "none"; });
+  $("#browseSelect").addEventListener("click", () => {
+    const p = $("#browseSelect").dataset.path || "";
+    if (browseTargetInput && p) { browseTargetInput.value = p; $("#browseMask").style.display = "none"; }
+  });
+}
+
 function bindSettings() {
   $("#saveSettingsBtn").addEventListener("click", async () => {
     setStatus($("#settingsStatus"), "保存中…");
     try {
       const body = {
         downloadPath: $("#set-downloadPath").value.trim(),
-        fileNameTemplate: $("#set-fileNameTemplate").value.trim(),
+        fileNameTemplate: $("#set-fileNameTemplate").value.trim().replace(/\.(mp4|webm|mov)$/i, ""),
         useAuthorSubdir: $("#set-useAuthorSubdir").value === "true",
+        showLikedInSearch: $("#set-showLikedInSearch") ? $("#set-showLikedInSearch").checked : true,
+        autoLike: $("#set-autoLike") ? $("#set-autoLike").checked : false,
+        autoFollow: $("#set-autoFollow") ? $("#set-autoFollow").checked : false,
         downloadBackend: $("#set-downloadBackend").value,
         concurrency: parseInt($("#set-concurrency").value, 10) || 3,
         aria2Path: $("#set-aria2Path").value.trim(),
@@ -613,7 +781,8 @@ function bindSettings() {
       }
       fillSettings(r.settings);
       setStatus($("#settingsStatus"), "已保存凭证与设置", "ok");
-      loadFollowingUsers();
+      if (kwType() === "users") loadFollowingUsers();
+      refreshIwaraBadge();
     } catch (e) {
       setStatus($("#settingsStatus"), e.message, "err");
     }
@@ -634,14 +803,62 @@ function bindSettings() {
     const el = $("#gbLoginStatus");
     el.textContent = "检测中…";
     try {
-      const r = await api("/api/iwara-check");
-      if (!r.cookieSet) { el.textContent = "尚未配置 Cookie"; el.className = "status err"; return; }
-      el.textContent = r.loggedIn ? ("已登录：" + (r.user || "")) : ((r.error || "未登录") + (r.cfChallenge ? "（需含 cf_clearance）" : ""));
-      el.className = "status " + (r.loggedIn ? "ok" : "err");
-      if (r.loggedIn) loadFollowingUsers();
+      const r = await api("/api/account-check");
+      updateIwaraUserBadge(r);
+      el.textContent = formatIwaraLoginBlock(r);
+      el.className = "login-detect " + (r.warnLevel === "expired" || !r.loggedIn || !r.cookieSet ? "err" : (r.warnLevel === "warn" ? "warn" : "ok"));
+      if (r.loggedIn && kwType() === "users") loadFollowingUsers();
     } catch (e) {
       el.textContent = e.message;
       el.className = "status err";
+    }
+  });
+
+  $("#exportIndexBtn").addEventListener("click", async () => {
+    const st = $("#indexStatus");
+    setStatus(st, "正在导出索引…");
+    try {
+      const r = await fetch("/api/index/export", { credentials: "same-origin" });
+      if (r.status === 401) { location.href = "/login.html"; return; }
+      if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || "导出失败"); }
+      const blob = await r.blob();
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "iwara-index-" + new Date().toISOString().slice(0, 10) + ".json";
+      a.click();
+      URL.revokeObjectURL(a.href);
+      setStatus(st, "已导出 iwara-index.json", "ok");
+    } catch (e) {
+      setStatus(st, "导出失败: " + (e && e.message || e), "err");
+    }
+  });
+  $("#importIndexBtn").addEventListener("click", () => { $("#importIndexFile").click(); });
+  $("#importIndexFile").addEventListener("change", async (ev) => {
+    const file = ev.target.files && ev.target.files[0];
+    const st = $("#indexStatus");
+    if (!file) return;
+    setStatus(st, "正在导入 " + file.name + " …");
+    try {
+      const text = await file.text();
+      const json = JSON.parse(text);
+      const r = await api("/api/index/import", "POST", json);
+      if (!r.ok) throw new Error(r.error || "导入失败");
+      setStatus(st, "导入完成：新增 " + r.added + "，更新 " + r.updated + "，合计 " + r.count, "ok");
+    } catch (e) {
+      setStatus(st, "导入失败: " + (e && e.message || e), "err");
+    } finally {
+      ev.target.value = "";
+    }
+  });
+  $("#scanIndexBtn").addEventListener("click", async () => {
+    const st = $("#indexStatus");
+    setStatus(st, "正在扫描下载目录…");
+    try {
+      const r = await api("/api/index/scan", "POST", {});
+      if (!r.ok) throw new Error(r.error || "扫描失败");
+      setStatus(st, "扫描完成：读 " + r.filesRead + " 个 json，用 " + r.filesUsed + " 个；新增 " + r.added + "，更新 " + r.updated + "，合计 " + r.count, "ok");
+    } catch (e) {
+      setStatus(st, "扫描失败: " + (e && e.message || e), "err");
     }
   });
 
@@ -688,12 +905,99 @@ function bindSettings() {
   });
 }
 
-function tickClock() {
-  const el = $("#serverTime");
+function formatIwaraRemain(r) {
+  if (!r || r.remainingDays == null) return "";
+  const d = r.remainingDays;
+  if (d <= 0) return "已过期";
+  if (d < 1) return "不足 1 天";
+  return "剩 " + (d < 10 ? d.toFixed(1) : Math.floor(d)) + " 天";
+}
+
+function formatIwaraLoginText(r) {
+  if (!r || !r.cookieSet) return "尚未配置 Cookie / Token";
+  const name = r.username || r.user || "";
+  const remain = formatIwaraRemain(r);
+  if (r.warnLevel === "expired" || (!r.loggedIn && r.warnLevel === "expired")) return "❌ 登录已过期" + (remain ? "（" + remain + "）" : "");
+  if (!r.loggedIn) return (r.error || "未登录") + (r.cfChallenge ? "（需含 cf_clearance）" : "");
+  if (r.warnLevel === "warn") return "⚠️ 已登录：" + name + (remain ? "（" + remain + "，请尽快更新凭证）" : "");
+  return "✅ 已登录：" + name + (remain ? "（" + remain + "）" : "");
+}
+
+function formatIwaraLoginBlock(r) {
+  const L = [];
+  const cred = (r && r.cred) || {};
+  const name = (r && (r.username || r.user)) || "";
+  const remain = formatIwaraRemain(r);
+  if (!r || !r.cookieSet) {
+    L.push("❌ 未配置 Cookie / Token");
+  } else if (r.warnLevel === "expired") {
+    L.push("❌ 登录已过期" + (remain ? "（" + remain + "）" : ""));
+  } else if (r.loggedIn) {
+    L.push((r.warnLevel === "warn" ? "⚠️ 已登录" : "✅ 已登录") + (remain ? "（" + remain + "）" : ""));
+    L.push("👤 用户名: " + (name || "(未取到)"));
+    if (r.userId) L.push("🆔 用户 id: " + r.userId);
+    if (r.username) L.push("🔗 https://www.iwara.tv/profile/" + r.username);
+    if (r.warnLevel === "warn") L.push("请尽快更新凭证");
+  } else {
+    L.push("❌ 未登录");
+    if (r.error) L.push(r.error);
+    if (r.cfChallenge) L.push("（需含 cf_clearance）");
+  }
+  L.push("───");
+  L.push("完整 Cookie: " + (cred.cookieChars || 0) + " 字符 / " + (cred.cookieItems || 0) + " 项 ｜ 存于服务器（不回传明文）");
+  L.push("含 cf_clearance: " + (cred.hasCfClearance ? "✅ 有" : "❌ 无"));
+  L.push("refresh_token: " + (cred.hasToken ? "✅ 有" : "❌ 无"));
+  L.push("access_token: " + (cred.hasAccessToken ? "✅ 有" : "❌ 无"));
+  return L.join("\n");
+}
+
+function updateIwaraUserBadge(r) {
+  const el = $("#iwaraUserBadge");
+  const nameEl = $("#iwaraUserName");
+  const remainEl = $("#iwaraUserRemain");
   if (!el) return;
+  const setStack = (name, remain, cls) => {
+    if (nameEl) nameEl.textContent = name;
+    else el.textContent = name;
+    if (remainEl) remainEl.textContent = remain || "";
+    el.className = "sub header-stack " + cls;
+  };
+  if (!r || !r.cookieSet) {
+    setStack("未配置凭证", "", "iwara-user-err");
+    el.title = "设置页粘贴 Cookie / Token";
+    return;
+  }
+  const name = r.username || r.user || "";
+  const remain = formatIwaraRemain(r);
+  if (r.warnLevel === "expired" || !r.loggedIn) {
+    setStack(r.warnLevel === "expired" ? "❌ 已过期" : ("❌ " + (r.error || "未登录")), remain, "iwara-user-err");
+  } else if (r.warnLevel === "warn") {
+    setStack("⚠️ " + (name || "已登录"), remain, "iwara-user-warn");
+  } else {
+    setStack("👤 " + (name || "已登录"), remain, "iwara-user-ok");
+  }
+  el.title = formatIwaraLoginText(r);
+}
+
+async function refreshIwaraBadge() {
+  try {
+    const r = await api("/api/account-check");
+    updateIwaraUserBadge(r);
+  } catch (_) {}
+}
+
+function tickClock() {
+  const dateEl = $("#serverDate");
+  const clockEl = $("#serverClock");
+  const el = $("#serverTime");
+  if (!el && !dateEl && !clockEl) return;
   const d = new Date();
   const pad = (n) => String(n).padStart(2, "0");
-  el.textContent = d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + " " + pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds());
+  const date = d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+  const time = pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds());
+  if (dateEl) dateEl.textContent = date;
+  if (clockEl) clockEl.textContent = time;
+  if (!dateEl && el) el.textContent = date + " " + time;
 }
 
 async function init() {
@@ -703,6 +1007,7 @@ async function init() {
   bindProgress();
   bindSearch();
   bindSettings();
+  bindBrowse();
   bindLogout();
   tickClock();
   setInterval(tickClock, 1000);
@@ -715,7 +1020,8 @@ async function init() {
     const s = await api("/api/settings");
     if (s.ok) fillSettings(s.settings);
   } catch (_) {}
-  loadFollowingUsers();
+  if (kwType() === "users") loadFollowingUsers();
+  refreshIwaraBadge();
   try {
     const c = await api("/api/search/cache");
     if (c.cache && Array.isArray(c.cache.results) && c.cache.results.length) {

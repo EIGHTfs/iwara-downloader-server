@@ -8,6 +8,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVER_DIR="$ROOT/server"
 PID_FILE="$SERVER_DIR/app.pid"
+export PATH="/usr/local/bin:/var/packages/Node.js_v22/target/usr/local/bin:/var/packages/Node.js_v20/target/usr/local/bin:$PATH"
 PORT="$(node -e "try{const c=require(process.argv[1]);console.log(c.port||8643)}catch(e){console.log(8643)}" "$SERVER_DIR/config.json" 2>/dev/null || echo 8643)"
 
 echo "=== iwara-downloader-server 状态 ==="

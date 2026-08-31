@@ -1,7 +1,7 @@
 # iwara-downloader-server 开发者文档
 
-> 版本：**1.0.2**（2026-09-01）
-> 运行环境：fnOS / Node.js v18+（实测 Node v24.19.0），零依赖 HTTP 服务，默认端口 8643
+> 版本：**1.0.5**（2026-09-01）
+> 运行环境：Node.js v18+（零依赖 HTTP 服务）。默认端口 8643。群晖 DSM 实测 Node v22.19.0 / v20.19.5。
 > 对照：本文件结构对齐 `gbmd-开发者文档-20260827.md`（项目结构 / API / 下载流程 / 配置 / 坑）
 
 ---
@@ -51,9 +51,11 @@ iwara-downloader-server/
     │   ├── iwara-api.js                # Iwara API（IP 直连 + 精简 UA + X-Version）
     │   ├── downloader.js               # 下载引擎（direct / aria2 + 子域轮换）
     │   ├── search-cache.js             # 按时间翻页搜索 + 记录导入导出
+    │   ├── video-index.js              # 精简索引 sidecar（不算 hash）
     │   └── data-backup.js              # zip 备份/恢复（对照 gbmd）
     └── public/                         # 网页前端（骨架来自 gbmd docs/ui-template）
-        ├── index.html / app.js / style.css / favicon.png
+        ├── index.html / app.js / style.css
+        ├── favicon.ico / favicon.png / iwara-logo.png
         └── login.html
 ```
 
@@ -69,7 +71,9 @@ cd /path/to/iwara-downloader-server
 ./status.sh         # 打印进程 / 端口 / 是否在线
 ```
 
-多份副本并存机制：每个副本独立 `config.json` + pid 文件。本机开发在 `/vol1/.../会话/iwara-downloader-server/`，NAS 运行时在 `/vol02/1000-0-1c60be7b/iwara-downloader-server/`，改完必须 `cp` 两份 + `./restart.sh`。
+`start.sh` 会把群晖 Node 套件路径补进 `PATH`（`/usr/local/bin`、`Node.js_v22` / `Node.js_v20`），DSM 默认 PATH 没有 `node`。
+
+正式运行副本在群晖共享盘（与 gbmd 同目录）：`/volume6/Game.Patch N MOD/iwara-downloader-server/`。fnOS 上 `/vol02/1000-0-1c60be7b/iwara-downloader-server` 是同一份共享的挂载，改代码后必须在 **SA6400** 上 `./restart.sh`，不要再在 fnOS 起一份抢同一端口。
 
 ---
 
@@ -85,9 +89,9 @@ cd /path/to/iwara-downloader-server
 | POST | `/api/settings` | 是 | 保存配置（支持组合文本） |
 | POST | `/api/change-password` | 是 | 设密码（≥4 位） |
 | POST | `/api/token` | 是 | 单独保存 iwaraToken |
-| GET | `/api/iwara-check` | 是 | 登录态检测 |
+| GET | `/api/account-check` | 是 | 账号/登录态检测（油猴+设置页） |
 | GET | `/api/following` | 是 | 关注用户列表（增量同步） |
-| GET | `/api/videos` | 否 | 视频列表（关键词走 `/search?query=`） |
+| GET | `/api/videos` | 否 | 视频列表（关键词走 `/search?query=`；登录后结果含 liked） |
 | POST | `/api/search` | 是 | 按时间后台翻页 |
 | GET | `/api/search-status` | 是 | 查询任务进度 |
 | POST | `/api/search/stop` | 是 | 停止搜索 |
@@ -97,6 +101,10 @@ cd /path/to/iwara-downloader-server
 | GET | `/api/search/export` | 是 | 下载 JSON |
 | POST | `/api/search/clear` | 是 | 清缓存 |
 | GET | `/api/video-info` | 是 | 解析单视频直链 |
+| GET | `/api/index` | 是 | 读下载根目录精简索引 `iwara-index.json` |
+| GET | `/api/index/export` | 是 | 下载纯 `{ 视频id: 条目 }` JSON |
+| POST | `/api/index/import` | 是 | 导入索引（兼容别人完整 /video dump） |
+| POST | `/api/index/scan` | 是 | 扫描下载目录 json，合并进总表 |
 | POST | `/api/download` | 是 | 提交下载任务 |
 | POST | `/api/receive` | 是 | 油猴专用接收口（规整后转发给 `/api/download`） |
 | GET | `/api/task` | 是 | 查询任务状态 |
@@ -105,8 +113,10 @@ cd /path/to/iwara-downloader-server
 | POST | `/api/task/stop` | 是 | 停止 |
 | POST | `/api/task/retry` | 是 | 重跑失败项 |
 | POST | `/api/task/concurrency` | 是 | 改并发数 |
-| GET | `/api/data/export` | 是 | 下载用户数据 zip |
-| POST | `/api/data/import` | 是 | 导入用户数据 zip |
+| GET | `/api/browse` | 是 | 浏览本机目录（设置页 📂 选下载根） |
+| GET | `/api/index-sidecar` | 否（HMAC） | Aria2 拉 sidecar JSON：`?id=&k=` |
+| GET | `/api/data/export` | 是 | 下载用户数据 zip（含 config.json） |
+| POST | `/api/data/import` | 是 | 导入用户数据 zip（body.data = zip 的 base64） |
 
 **鉴权**：设置密码后所有 `/api/*` 需要 cookie `session=xxx`。没设密码（`needsAuth:false`）全部放行。公共静态资源（index.html / login.html / favicon / js / css）无需鉴权。
 
@@ -151,7 +161,7 @@ POST /api/logout → { ok: true }
     "concurrency": 3,
     "aria2Path": "https://10.10.10.4:xxx/jsonrpc",
     "downloadPath": "/volume3/WORKGROUP/",
-    "fileNameTemplate": "Iwara_-_{TITLE}_[{ID}]_[{QUALITY}].mp4",
+    "fileNameTemplate": "Iwara_-_{TITLE}_[{ID}]_[{QUALITY}]",
     "useAuthorSubdir": false,
     "sessionHours": 72,
     "hasCookie": true,
@@ -185,6 +195,17 @@ POST /api/logout → { ok: true }
 
 返回同上（脱敏）。
 
+### GET /api/browse
+
+设置页下载根目录 📂 弹窗用。只列目录，排除 `@eaDir` / `#recycle` / `.git`。路径必须以 `/` 开头。
+
+```
+GET /api/browse?path=/volume3/WORKGROUP
+→ { ok:true, path, parent, dirs:["subdir", ...] }
+```
+
+读的是**跑本服务那台机器**上的文件系统。Aria2 后端要把服务和 Aria2 放同一台，才能选到 Aria2 的 `dir`。
+
 ### POST /api/change-password
 
 ```json
@@ -205,15 +226,22 @@ POST /api/logout → { ok: true }
 
 ## 6. Iwara 检测 / 关注用户 / 视频解析
 
-### GET /api/iwara-check
+### GET /api/account-check
+
+油猴脚本与设置页「检测登录状态」共用。不回传 Cookie/Token 明文，只给脱敏诊断 `cred`。
 
 ```json
 // 未配置
-{ "ok": true, "cookieSet": false, "checked": false, "message": "未配置 Cookie / Token" }
+{ "ok": true, "cookieSet": false, "checked": false, "message": "未配置 Cookie / Token",
+  "cred": { "hasCookie": false, "cookieChars": 0, "cookieItems": 0, "hasCfClearance": false,
+            "hasToken": false, "hasAccessToken": false } }
 
 // 已登录
 { "ok": true, "cookieSet": true, "checked": true, "loggedIn": true,
-  "user": "fluquormyosotis", "userId": "c1d1cf1f-...", "username": "fluquormyosotis" }
+  "user": "fluquormyosotis", "userId": "c1d1cf1f-...", "username": "fluquormyosotis",
+  "warnLevel": "ok", "remainingDays": 29.5, "expiresAt": 1790763448000,
+  "cred": { "hasCookie": true, "cookieChars": 127, "cookieItems": 2, "hasCfClearance": false,
+            "hasToken": true, "hasAccessToken": true } }
 
 // CF 挑战
 { "ok": false, "loggedIn": false, "cfChallenge": true,
@@ -392,6 +420,42 @@ X-Version：`SHA1([pathname末段, expires, 密钥].join('_'))`，密钥 `mSvL05
 - 需已配 `downloadPath`，否则 400。
 - 返回 `{ ok:true, total }`。
 - **每次下载都重新 `getVideoInfo`**，禁止复用旧 URL。
+- 提交成功后写精简索引（不算 hash）：本机总表 `server/iwara-index.json`（下载目录可写则双写）。direct 落盘后再写视频旁 `<同名>.json`。aria2：本机生成 sidecar，公开 `GET /api/index-sidecar?id=&k=`（HMAC 短链），再 `aria2.addUri` 让 Aria2 把 JSON 拉到下载目录，和视频同名（`.json`）。
+
+### GET /api/index
+
+磁盘文件是纯映射（没有外壳）。优先 `downloadPath/iwara-index.json`；若下载目录对本进程不可写（Aria2 在另一台机器），写到服务数据目录 `server/iwara-index.json`。读取时两处合并。
+
+```json
+{
+  "z2rctWsaRNogFK": {
+    "name": "帰ってきたtakesiman",
+    "username": "takesiman",
+    "title": "ワカメちゃん化浦波＆初雪で駅の階段を上る",
+    "fileId": "7d14494c-072b-43b5-a67c-42b75d286426",
+    "duration": 124,
+    "tags": [
+      { "id": "kancolle", "type": "general", "sensitive": false },
+      { "id": "mikumikudance", "type": "category", "sensitive": false }
+    ],
+    "createdAt": "2025-06-03T21:16:40.000Z"
+  }
+}
+```
+
+接口返回 `{ ok:true, count, videos }`。不算 hash。不生成别人那种完整 `/video/:id` dump。
+
+### GET /api/index/export
+
+下载上面这份纯 JSON。
+
+### POST /api/index/import
+
+body 可以是纯 `{ 视频id: 条目 }`、`{ videos: {...} }`，或别人单条/数组完整 dump。按 id 合并。
+
+### POST /api/index/scan
+
+扫描 `downloadPath` 下 json（跳过总表本身），把别人 dump / sidecar 合并进总表。返回 `{ ok, filesRead, filesUsed, added, updated, count }`。
 
 前端批量框：每行一个完整链接或纯 ID，`parseVideoIds` 抽出 `iwara.tv/video/<id>`。
 
@@ -482,10 +546,14 @@ X-Version：`SHA1([pathname末段, expires, 密钥].join('_'))`，密钥 `mSvL05
 - `server/search_task.json`
 - `server/cdn_hosts_state.json`
 - `server/following_cache.json`
+- `server/iwara-index.json`
+- `server/sessions.json`
 - `server/server.log`
 - `server/app.pid`
 
 全部 gitignore，**禁止入库**。`.git-push-token` 不进备份清单（推送凭据只留本机，不随用户数据 zip 导出）。
+
+网页设置页「📦 数据备份 / 恢复」走这两条 API。导入会按清单白名单覆盖 `server/config.json`（含 Cookie / Token / 密码哈希 / 下载路径），**运行中导入后必须 `./restart.sh` 才完全生效**。
 
 ---
 
@@ -496,8 +564,10 @@ items[]
   → 校验 downloadPath
   → 按 useAuthorSubdir 拼 savePath（默认否：直接根目录）
   → 对每一项：
+       跳过判定（不看索引）：下载根（及一层作者子目录）已有文件名含 [视频id] 的非空视频
+         或 Aria2 tellActive/tellWaiting/tellStopped 已有同 id / 同文件名
        getVideoInfo(id)                    // 必须每次 fresh
-       applyFileNameTemplate(...)          // Iwara_-_{TITLE}_[{ID}]_[{QUALITY}].mp4
+       applyFileNameTemplate(...)          // Iwara_-_{TITLE}_[{ID}]_[{QUALITY}]  （落盘自动补 .mp4）
        direct: downloadToFile（IP 直连 + Range + 子域轮换）
        aria2:  aria2.addUri（UA header + dir + 可选 Cookie）
 ```
@@ -636,12 +706,15 @@ bash scripts/git-push.sh
 3. **每次下载必须 fresh `getVideoInfo`**，禁止复用 URL。
 4. 搜索关键词走 `/search?query=`，禁止 `/videos?search=`。
 5. `useAuthorSubdir` 默认否，代码必须读配置，不要写死 true。
-6. 改代码后同步运行副本并 **重启**，看 PID 是否变化。
+6. 改代码后同步运行副本并在 **SA6400** 上 **重启**，看 PID 是否变化。不要在 fnOS 再起一份。
 7. aria2：UA header、DSM 证书、`dir` 权限、NAS DNS → 104.26.12.12。
-8. 用户数据（config / cookie / token / 任务 / 搜索缓存 / `.git-push-token`）全部 gitignore。
+8. 用户数据（config / cookie / token / 任务 / 搜索缓存 / `.git-push-token` / `iwara-index.json` / `sessions.json`）全部 gitignore。
 9. 前端交给模板复用：先改 `docs/ui-template` 对应结构，不要另起一套 DOM。
 10. **Cookie 保存填组合文本**：多行 `Cookie=...\nToken=...\nAccessToken=...` 会被拆开存；留空不覆盖。
 11. **关注列表增量同步**：落 `following_cache.json`，内存 10 分钟 TTL；首次全量，之后只拉头部新增。
+12. **跳过已下载只认文件或 Aria2 记录**，索引不能当跳过依据（Aria2 记录可被用户清掉）。
+13. 文件名模板不要写 `.mp4`，`applyFileNameTemplate` 落盘时自动补。
+14. 设置页下载根目录用 `/api/browse` 选的是**跑服务那台机器**上的路径；Aria2 后端必须让服务和 Aria2 看到同一块盘。
 
 **改动后必测**
 
@@ -656,7 +729,22 @@ bash scripts/git-push.sh
 
 ## 14. 变更日志
 
-### 1.0.2（本次）
+### 1.0.5（本次）
+
+| 项 | 说明 |
+|---|---|
+| 运行位置 | 正式进程改到群晖 SA6400（`/volume6/Game.Patch N MOD/iwara-downloader-server`），与 Aria2 / 下载盘同机，目录选择和「文件已存在跳过」才能看见 `/volume3/WORKGROUP/` |
+| `start.sh` | 自动找 DSM Node 套件；没有 `setsid` 时退回 `nohup` |
+| 跳过已下载 | **不看索引**。本机文件名含 `[视频id]` 的非空视频，或 Aria2 活动/等待/已完成记录命中，才跳过、不再 `addUri` |
+| 目录选择 | 设置页下载根目录 📂，对照 gbmd：`GET /api/browse?path=` + 弹窗 |
+| 文件名模板 | 默认 `Iwara_-_{TITLE}_[{ID}]_[{QUALITY}]`，不要写 `.mp4`；设置页列出全部变量 |
+| 顶栏 | 标题三行；用户名 / 剩余天数分行；年月日 / 时分秒分行；油猴 📥 / 油猴脚本分行 |
+| 关键词搜索 | 下拉 type=videos\|users；视频 `sort=date`，作者 `sort=relevance`；关注列表只在作者模式加载；与按时间搜索互不干扰 |
+| 视频索引 | 自己生成精简 `{id:{name,username,title,fileId,duration,tags,createdAt}}`；兼容读取别人完整 dump；sidecar 经 HMAC 短链推给 Aria2 |
+| 账号检测 | 只保留 `GET /api/account-check`（旧 `/api/iwara-check` 已删） |
+| 用户数据 zip | 清单增加 `iwara-index.json`、`sessions.json` |
+
+### 1.0.2
 
 | 项 | 说明 |
 |---|---|

@@ -55,6 +55,10 @@ function normalizeVideo(v) {
     dateAdded: v.dateAdded || Math.floor(createdMs(v) / 1000) || 0,
     rating: v.rating || (nsfw ? "ecchi" : "general"),
     isNsfw: nsfw,
+    liked: !!v.liked,
+    following: !!(v.user && v.user.following),
+    authorId: String((v.user && v.user.id) || v.authorId || ""),
+    numLikes: Number(v.numLikes) || 0,
     thumbnail: v.thumbnail,
     file: v.file ? { id: v.file.id, name: v.file.name, size: v.file.size } : undefined,
     thumbnailUrl: api.thumbnailUrl(v)
@@ -114,7 +118,7 @@ function passRating(v, contentFilter) {
   return isNsfw(v) ? wantNsfw : wantNormal;
 }
 
-async function startSearchTask({ startDate, endDate, contentFilter, startTs, endTs, user, search }) {
+async function startSearchTask({ startDate, endDate, contentFilter, startTs, endTs, user }) {
   if (queryRunning && queryTask && queryTask.status === "running") {
     throw new Error("已有搜索任务在进行中");
   }
@@ -125,9 +129,9 @@ async function startSearchTask({ startDate, endDate, contentFilter, startTs, end
     contentFilter: contentFilter || ["normal", "nsfw"],
     startTs, endTs,
     user: user || "",
-    search: search || "",
+    search: "",
     results: [],
-    message: "开始搜索…",
+    message: "开始按时间搜索…",
     startedAt: Date.now(),
     updatedAt: Date.now()
   };
@@ -161,7 +165,6 @@ async function doQueryLoop() {
         page,
         limit: 48,
         user: queryTask.user || "",
-        search: queryTask.search || "",
         rating
       });
       const list = (data && data.results) || [];

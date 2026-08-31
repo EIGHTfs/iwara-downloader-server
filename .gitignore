@@ -6,6 +6,8 @@ server/search_cache.json
 server/search_task.json
 server/cdn_hosts_state.json
 server/following_cache.json
+server/iwara-index.json
+server/sessions.json
 server/app.pid
 server/*.bak-*
 *.pid

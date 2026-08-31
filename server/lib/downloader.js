@@ -14,9 +14,11 @@ const fs = require("fs");
 const path = require("path");
 const https = require("https");
 const crypto = require("crypto");
+const os = require("os");
 
 const cfg = require("../config");
 const api = require("./iwara-api");
+const videoIndex = require("./video-index");
 const IWARA_CF_IP = api.IWARA_CF_IP || "104.26.12.12";
 
 const DATA_DIR = process.env.GBMD_DATA_DIR || __dirname;
@@ -119,7 +121,7 @@ function sanitizeFileName(name) {
 /**
  * 文件名模板（学 IwaraDownloadTool 油猴脚本 src/download/downloadPath.ts）：
  *   config.fileNameTemplate 支持 {TITLE} {ALIAS} {ID} {AUTHOR} {QUALITY} {UPLOADTIME} {NOWTIME}
- *   例：Iwara_-_{TITLE}_[{ID}]_[{QUALITY}].mp4
+ *   例：Iwara_-_{TITLE}_[{ID}]_[{QUALITY}]  （不要写 .mp4，落盘时自动补）
  * @param {string} template
  * @param {Object} info - getVideoInfo 返回的视频信息
  */
@@ -138,14 +140,14 @@ function applyFileNameTemplate(template, info) {
     UPLOADTIME: fmtDT(upload),
     NOWTIME: fmtDT(now)
   };
-  let name = template || "Iwara_-_{TITLE}_[{ID}]_[{QUALITY}].mp4";
+  let name = template || "Iwara_-_{TITLE}_[{ID}]_[{QUALITY}]";
   for (const k of Object.keys(vars)) {
     name = name.split(`{${k}}`).join(vars[k]);
   }
-  // 兜底：模板替换后空文件名（如全变量缺失）→ 用 ID
   name = sanitizeFileName(name);
-  if (!name.endsWith(".mp4") && !name.endsWith(".webm") && !name.endsWith(".mov")) name += ".mp4";
-  return name;
+  name = name.replace(/\.(mp4|webm|mov)$/i, "");
+  if (!name) name = sanitizeFileName(info.id || "unnamed");
+  return name + ".mp4";
 }
 
 function safeJoin(root, sub) {
@@ -284,42 +286,18 @@ function downloadToFile(item, onProgress) {
   });
 }
 
-/** aria2 后端：addUri 推送（支持 http/https；DSM 自签名证书忽略校验） */
-async function aria2Add(item) {
+function aria2Rpc(method, params) {
   const c = cfg.readConfig();
   const token = c.aria2Token;
-  const options = {
-    out: sanitizeFileName(item.file),
-    "max-connection-per-server": "4",
-    "split": "4",
-    "continue": "true",
-    "allow-overwrite": "false",
-    "auto-file-renaming": "false"
-  };
-  if (c.downloadPath && c.downloadPath.trim()) options["dir"] = c.downloadPath.trim();
-  // 关键：aria2 默认 UA 是 aria2/1.37.0，Cloudflare 会 403 拦截；
-  // 必须带精简浏览器 UA（NO_AWK 版，与 direct 后端一致）才能过 CF
-  const headers = [`User-Agent: ${api.DEFAULT_UA}`];
-  // 只传含 cf_clearance 的 Cookie；过期/deleted 的 _ga 会让 CF 直接 403
-  if (c.iwaraCookie && /cf_clearance=/.test(c.iwaraCookie) && !/deleted/i.test(c.iwaraCookie)) {
-    headers.push(`Cookie: ${c.iwaraCookie}`);
-  }
-  options["header"] = headers;
-  // 群晖 DNS Server 套件：*.iwara.tv → 104.26.12.12（系统 127.0.0.1:53 可能未监听）
-  options["dns-server"] = "10.10.10.64";
-  const params = [[item.url], options];
+  const endpoint = c.aria2Path && c.aria2Path.trim() ? c.aria2Path.trim() : "http://127.0.0.1:6800/jsonrpc";
   const body = {
     jsonrpc: "2.0",
     id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(16).slice(2),
-    method: "aria2.addUri",
+    method,
     params: token ? ["token:" + token].concat(params) : params
   };
-
-  const endpoint = c.aria2Path && c.aria2Path.trim() ? c.aria2Path.trim() : "http://127.0.0.1:6800/jsonrpc";
-
-  // 用 https.request（而非 undici fetch）：DSM 常用自签名证书，需 rejectUnauthorized:false
   const { request } = endpoint.startsWith("https") ? require("https") : require("http");
-  const result = await new Promise((resolve, reject) => {
+  return new Promise((resolve, reject) => {
     let u;
     try {
       u = new URL(endpoint);
@@ -337,12 +315,12 @@ async function aria2Add(item) {
           "content-type": "application/json",
           "content-length": Buffer.byteLength(payload)
         },
-        rejectUnauthorized: false, // DSM 自签名证书
+        rejectUnauthorized: false,
         timeout: 20000
       },
       (res) => {
         let d = "";
-        res.on("data", (c) => (d += c));
+        res.on("data", (chunk) => (d += chunk));
         res.on("end", () => {
           try {
             const j = JSON.parse(d);
@@ -361,7 +339,156 @@ async function aria2Add(item) {
     req.write(payload);
     req.end();
   });
-  return result; // gid
+}
+
+function aria2DirOptions(c, outName) {
+  const options = {
+    out: sanitizeFileName(outName),
+    "continue": "true",
+    "allow-overwrite": "true",
+    "auto-file-renaming": "false"
+  };
+  if (c.downloadPath && c.downloadPath.trim()) options["dir"] = c.downloadPath.trim();
+  return options;
+}
+
+function lanIPv4() {
+  try {
+    const ifaces = os.networkInterfaces();
+    for (const list of Object.values(ifaces || {})) {
+      for (const i of list || []) {
+        const fam = i.family;
+        if ((fam === "IPv4" || fam === 4) && !i.internal) return i.address;
+      }
+    }
+  } catch (_) {}
+  return "";
+}
+
+/** 本机生成 sidecar JSON，公开短链给 aria2 拉到下载目录。 */
+async function aria2AddIndexJson(outName, id, entry) {
+  const c = cfg.readConfig();
+  videoIndex.writeFetchableSidecar(id, entry);
+  const port = c.port || 28463;
+  const host = process.env.IWARA_PUBLIC_HOST || lanIPv4() || "127.0.0.1";
+  const url = "http://" + host + ":" + port + "/api/index-sidecar?id=" + encodeURIComponent(id) + "&k=" + encodeURIComponent(videoIndex.sidecarKey(id));
+  const options = aria2DirOptions(c, outName);
+  options["max-connection-per-server"] = "1";
+  console.log("[downloader] 索引 JSON → aria2", url, "→", outName);
+  return aria2Rpc("aria2.addUri", [[url], options]);
+}
+
+function aria2FileName(st) {
+  try {
+    const files = (st && st.files) || [];
+    const p = files[0] && files[0].path;
+    if (p) return path.basename(String(p));
+  } catch (_) {}
+  return "";
+}
+
+function aria2StatusHasId(st, id, fileName) {
+  const vid = String(id || "");
+  const needle = vid ? "[" + vid + "]" : "";
+  const name = aria2FileName(st);
+  if (needle && name && name.indexOf(needle) >= 0) return true;
+  if (fileName && name && name === sanitizeFileName(fileName)) return true;
+  const uris = ((st && st.files && st.files[0] && st.files[0].uris) || []).map((u) => String(u.uri || ""));
+  if (vid && uris.some((u) => u.indexOf(vid) >= 0)) return true;
+  return false;
+}
+
+async function aria2TellList(method) {
+  try {
+    const keys = ["gid", "status", "files", "totalLength", "completedLength"];
+    const r = await aria2Rpc(method, [0, 1000, keys]);
+    return Array.isArray(r) ? r : [];
+  } catch (e) {
+    console.error("[downloader] " + method + " 失败:", e && e.message || e);
+    return [];
+  }
+}
+
+/** 活动 / 等待 / 已完成 里已有同视频 → 视为已下过。 */
+async function aria2AlreadyHas(id, fileName) {
+  const lists = await Promise.all([
+    aria2TellList("aria2.tellActive"),
+    aria2TellList("aria2.tellWaiting"),
+    aria2TellList("aria2.tellStopped")
+  ]);
+  for (const list of lists) {
+    for (const st of list) {
+      if (aria2StatusHasId(st, id, fileName)) return true;
+    }
+  }
+  return false;
+}
+
+function markSkipped(item, reason) {
+  item.state = "skipped";
+  item.progress = 100;
+  item.error = reason || "已下载，跳过";
+  task.completed++;
+}
+
+function localFileExists(savePath) {
+  try {
+    return !!(savePath && fs.existsSync(savePath) && fs.statSync(savePath).size > 0);
+  } catch (_) {
+    return false;
+  }
+}
+
+/** 下载根目录（及一层作者子目录）里文件名含 [视频id] 的非空视频 → 视为已下过（不靠索引）。 */
+function findExistingVideoFile(root, id) {
+  const vid = String(id || "").trim();
+  if (!vid || !root) return "";
+  const needle = "[" + vid + "]";
+  function scanDir(dir) {
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { return ""; }
+    for (const e of entries) {
+      if (!e.isFile()) continue;
+      if (e.name.indexOf(needle) < 0 || !/\.(mp4|webm|mov|mkv)$/i.test(e.name)) continue;
+      const full = path.join(dir, e.name);
+      try { if (fs.statSync(full).size > 0) return full; } catch (_) {}
+    }
+    return "";
+  }
+  try {
+    if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) return "";
+  } catch (_) { return ""; }
+  const hit = scanDir(root);
+  if (hit) return hit;
+  // 作者子目录只扫一层，避免把整个共享盘走一遍
+  let entries;
+  try { entries = fs.readdirSync(root, { withFileTypes: true }); } catch (_) { return ""; }
+  for (const e of entries) {
+    if (!e.isDirectory() || e.name === "@eaDir" || e.name === "#recycle" || e.name === ".git") continue;
+    const found = scanDir(path.join(root, e.name));
+    if (found) return found;
+  }
+  return "";
+}
+
+/** aria2 后端：addUri 推送（支持 http/https；DSM 自签名证书忽略校验） */
+async function aria2Add(item) {
+  const c = cfg.readConfig();
+  const options = aria2DirOptions(c, item.file);
+  options["max-connection-per-server"] = "4";
+  options.split = "4";
+  options["allow-overwrite"] = "false";
+  // 关键：aria2 默认 UA 是 aria2/1.37.0，Cloudflare 会 403 拦截；
+  // 必须带精简浏览器 UA（NO_AWK 版，与 direct 后端一致）才能过 CF
+  const headers = [`User-Agent: ${api.DEFAULT_UA}`];
+  // 只传含 cf_clearance 的 Cookie；过期/deleted 的 _ga 会让 CF 直接 403
+  if (c.iwaraCookie && /cf_clearance=/.test(c.iwaraCookie) && !/deleted/i.test(c.iwaraCookie)) {
+    headers.push(`Cookie: ${c.iwaraCookie}`);
+  }
+  options.header = headers;
+  // 群晖 DNS Server 套件：*.iwara.tv → 104.26.12.12（系统 127.0.0.1:53 可能未监听）
+  options["dns-server"] = "10.10.10.64";
+  return aria2Rpc("aria2.addUri", [[item.url], options]);
 }
 
 // ---------- 任务循环 ----------
@@ -385,12 +512,20 @@ async function runDownloadLoop() {
       item.state = "downloading";
       saveTask();
 
-      if (c.downloadBackend === "aria2") {
+      const existing = findExistingVideoFile(c.downloadPath, item.id);
+      if (existing) {
+        item.file = path.basename(existing);
+        item.savePath = existing;
+        markSkipped(item, "文件已存在，跳过");
+      } else if (c.downloadBackend === "aria2" && await aria2AlreadyHas(item.id, item.file)) {
+        markSkipped(item, "Aria2 已有此文件，跳过");
+      } else if (c.downloadBackend === "aria2") {
         // aria2：也先取 fresh 链接（下载链接会到期，不能复用旧 URL）
         const info = await api.getVideoInfo(item.id);
         item.url = info.downloadUrl;
         if (info.file && info.file.size) item.total = info.file.size;
         if (!item.url) throw new Error("无法获取下载链接: " + (info.error || "未知"));
+        await api.autoLikeFollow(info);
         // 用文件名模板生成文件名（aria2 的 out 选项）
         item.file = applyFileNameTemplate(c.fileNameTemplate, {
           title: info.title || item.title,
@@ -400,18 +535,32 @@ async function runDownloadLoop() {
           quality: info.quality || "",
           uploadTime: info.uploadTime
         });
-        await aria2Add(item);
-        // aria2 异步下载，无法（简单）追踪进度 → 直接标记为已提交
-        item.state = "submitted";
-        item.progress = 100;
-        item.error = "已提交至 Aria2（进度请查看 Aria2 WebUI）";
-        task.completed++;
+        if (await aria2AlreadyHas(item.id, item.file)) {
+          markSkipped(item, "Aria2 已有此文件，跳过");
+        } else {
+          await aria2Add(item);
+          const packed = videoIndex.fromDownload(info, item);
+          if (packed) {
+            try {
+              await aria2AddIndexJson(videoIndex.sidecarFileName(item.file), packed.id, packed.entry);
+            } catch (e) {
+              console.error("[downloader] 索引 JSON 推送 aria2 失败:", e && e.message || e);
+            }
+          }
+          // aria2 异步下载，无法（简单）追踪进度 → 直接标记为已提交
+          item.state = "submitted";
+          item.progress = 100;
+          item.error = "已提交至 Aria2（进度请查看 Aria2 WebUI）";
+          task.completed++;
+          await videoIndex.recordDownload(c.downloadPath, info, item);
+        }
       } else {
         // direct：每次下载都重新解析直链 —— 下载链接会到期，必须用 fresh 链接
         const info = await api.getVideoInfo(item.id);
         item.url = info.downloadUrl;
         if (info.file && info.file.size) item.total = info.file.size;
         if (!item.url) throw new Error("无法获取下载链接: " + (info.error || "未知"));
+        await api.autoLikeFollow(info);
         // 用文件名模板重新生成文件名/保存路径（学油猴脚本，用户可自定义模板）
         item.file = applyFileNameTemplate(c.fileNameTemplate, {
           title: info.title || item.title,
@@ -425,11 +574,8 @@ async function runDownloadLoop() {
         item.savePath = authorDir ? safeJoin(c.downloadPath, path.join(authorDir, item.file)) : safeJoin(c.downloadPath, item.file);
         // 确保目录存在
         fs.mkdirSync(path.dirname(item.savePath), { recursive: true });
-        // 已存在且非 0 字节 → 跳过
-        if (fs.existsSync(item.savePath) && fs.statSync(item.savePath).size > 0) {
-          item.state = "skipped";
-          item.progress = 100;
-          task.completed++;
+        if (localFileExists(item.savePath)) {
+          markSkipped(item, "文件已存在，跳过");
         } else {
           const result = await downloadToFile(item, (p) => {
             item.doneBytes = p.done;
@@ -441,6 +587,7 @@ async function runDownloadLoop() {
             item.progress = 100;
             item.doneBytes = item.total || 0;
             task.completed++;
+            await videoIndex.recordDownload(c.downloadPath, info, item);
           }
         }
       }
@@ -571,5 +718,6 @@ cdnLoadState();
 module.exports = {
   getTask, restorePendingTask,
   startDownloadTask, pauseTask, resumeTask, stopTask, setConcurrency, retryFailed,
-  sanitizeFileName, fmtSize
+  sanitizeFileName, fmtSize,
+  aria2AddIndexJson
 };

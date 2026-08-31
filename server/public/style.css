@@ -50,9 +50,40 @@ header {
   z-index: 10;
 }
 :root[data-theme="night"] header { background: linear-gradient(135deg, #1c2730, #1a232b); }
-header h1 { margin: 0; font-size: 20px; }
+header h1 { margin: 0; font-size: 20px; display: flex; align-items: center; gap: 8px; }
+.brand-block { display: flex; align-items: center; gap: 10px; }
+.brand-title { margin: 0; font-size: 14px; line-height: 1.2; font-weight: 700; }
+.brand-logo { width: 28px; height: 28px; border-radius: 6px; display: inline-block; vertical-align: middle; object-fit: contain; }
+.brand-block .brand-logo { width: 42px; height: 42px; }
+.auth-wrap h1 { display: flex; align-items: center; justify-content: center; gap: 10px; }
+.auth-wrap .brand-logo { width: 36px; height: 36px; }
 .sub { color: var(--muted); font-size: 12px; }
 .right { display: flex; align-items: center; gap: 12px; }
+.header-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.25;
+  text-align: center;
+  white-space: nowrap;
+}
+a.btn-userscript {
+  text-decoration: none;
+  padding: 4px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--card2);
+  color: var(--text);
+  font-size: 12px;
+  gap: 2px;
+}
+#iwaraUserBadge { font-weight: 600; padding: 4px 10px; border-radius: 10px; }
+#iwaraUserBadge.iwara-user-ok { color: var(--success); background: color-mix(in srgb, var(--success) 12%, transparent); }
+#iwaraUserBadge.iwara-user-warn { color: var(--warn); background: #fff3cd; }
+#iwaraUserBadge.iwara-user-err { color: var(--fail); background: #fdecea; }
+:root[data-theme="night"] #iwaraUserBadge.iwara-user-warn { background: rgba(217,119,6,.22); }
+:root[data-theme="night"] #iwaraUserBadge.iwara-user-err { background: rgba(248,113,113,.18); }
 .container { max-width: 1080px; margin: 0 auto; padding: 16px; }
 .tabs {
   display: flex;
@@ -111,7 +142,24 @@ input, select, textarea {
 input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary); outline-offset: -1px; }
 .status { color: var(--muted); font-size: 12px; }
 .status.ok { color: var(--success); }
+.status.warn { color: var(--warn); }
 .status.err { color: var(--fail); }
+.login-detect {
+  margin: 10px 0 0;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--card2);
+  border: 1px solid var(--border);
+  font: 13px/1.65 ui-monospace, Consolas, monospace;
+  white-space: pre-wrap;
+  color: var(--text);
+  min-height: 1.6em;
+}
+.login-detect.ok { background: color-mix(in srgb, var(--success) 10%, var(--card2)); color: var(--success); }
+.login-detect.warn { background: #fff8e1; color: #8a5a00; }
+.login-detect.err { background: #fdecea; color: var(--fail); }
+:root[data-theme="night"] .login-detect.warn { background: rgba(217,119,6,.18); color: #fbbf24; }
+:root[data-theme="night"] .login-detect.err { background: rgba(248,113,113,.16); }
 .result-list { margin-top: 8px; max-height: 480px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--card); }
 .result-item {
   display: flex;
@@ -123,10 +171,13 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary); o
 .result-item .name { flex: 1; min-width: 0; }
 .result-item .row-thumb { margin-left: 0; }
 .result-item a { color: var(--primary); text-decoration: none; }
+.result-item a:hover { text-decoration: underline; }
+.result-item a .row-thumb { display: block; }
 .result-item .meta { color: var(--muted); font-size: 12px; }
 .badge { padding: 1px 8px; border-radius: 999px; font-size: 11px; }
 .badge.nsfw { background: rgba(220,38,38,.15); color: var(--fail); }
 .badge.normal { background: rgba(22,163,74,.15); color: var(--success); }
+.badge.liked { background: rgba(225,29,72,.15); color: #e11d48; }
 .empty { color: var(--muted); text-align: center; padding: 24px; }
 
 /* ============================================================
@@ -247,7 +298,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary); o
   .container { padding: 12px; }
   .card { padding: 14px; }
   header { flex-wrap: wrap; gap: 6px; padding: 10px 14px; }
-  header .sub { display: none; }
+  header .right { flex-wrap: wrap; }
   .tabs { overflow-x: auto; }
   .tab { flex: 0 0 auto; min-width: 92px; padding: 10px 8px; }
   button { padding: 10px 14px; }

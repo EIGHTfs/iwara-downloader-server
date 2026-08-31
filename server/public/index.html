@@ -3,7 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<link rel="icon" type="image/png" href="favicon.png">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" href="/favicon.png?v=2">
+<link rel="apple-touch-icon" href="/iwara-logo.png?v=2">
 <title>iwara-downloader</title>
 <link rel="stylesheet" href="style.css">
 <script>
@@ -15,13 +17,23 @@ try {
 </head>
 <body>
 <header>
-  <div style="display:flex;align-items:center">
-    <h1>🌐 iwara</h1>
-    <span class="sub">Iwara Video Downloader</span>
+  <div class="brand-block">
+    <img src="iwara-logo.png" alt="Iwara" class="brand-logo">
+    <h1 class="brand-title">Iwara<br>Video<br>Downloader</h1>
   </div>
   <div class="right">
-    <span id="serverTime" class="sub"></span>
-    <a class="ghost" href="/userscript" id="btn-userscript" style="text-decoration:none;display:inline-block;padding:6px 14px;border-radius:8px;border:1px solid var(--border);background:var(--card2);color:var(--text);font-size:13px">📥 油猴脚本</a>
+    <span id="iwaraUserBadge" class="sub header-stack">
+      <span id="iwaraUserName">未配置凭证</span>
+      <span id="iwaraUserRemain"></span>
+    </span>
+    <span id="serverTime" class="sub header-stack">
+      <span id="serverDate"></span>
+      <span id="serverClock"></span>
+    </span>
+    <a class="ghost header-stack btn-userscript" href="/iwara-cred-fetch.user.js" id="btn-userscript">
+      <span>📥</span>
+      <span>油猴脚本</span>
+    </a>
     <button class="ghost" id="themeBtn" type="button" title="切换白天/夜间模式">🌙 夜间</button>
     <button class="ghost" id="logoutBtn" type="button">退出登录</button>
   </div>
@@ -89,27 +101,27 @@ try {
   <div class="tab-panel" id="panel-search">
     <div class="card">
       <h2>搜索视频</h2>
-      <p class="hint">关键词搜索（与官网一致）或按时间搜索（按最新翻页，用上传日期过滤），共用下方分级筛选</p>
+      <p class="hint">关键词搜索对齐官网。默认视频：<code>/search?type=videos&amp;query=&amp;sort=date</code>。选作者：<code>/search?type=users&amp;query=&amp;sort=relevance</code>，此时才加载关注列表，并复用同一个关键词框。与按时间搜索互相独立。</p>
       <div class="row">
         <label><input type="checkbox" id="filterNormal" checked> 普通</label>
         <label><input type="checkbox" id="filterNsfw" checked> R18</label>
       </div>
       <div class="row mt">
-        <label>关键词 <input type="text" id="kwInput" placeholder="输入关键词" style="width:240px"></label>
-        <label>排序
-          <select id="searchSort">
-            <option value="date">最新</option>
-            <option value="trending">热门</option>
-            <option value="views">观看最多</option>
+        <label>类型
+          <select id="kwType">
+            <option value="videos" selected>视频</option>
+            <option value="users">作者</option>
           </select>
         </label>
-        <div style="position:relative">
-          <label>选关注用户 <input type="text" id="kwUserInput" placeholder="登录后加载关注列表" style="width:160px" autocomplete="off" title="从当前登录账号拉取关注用户，输入过滤，选中后填入用户名并搜索"></label>
+        <div style="position:relative;flex:1;min-width:220px">
+          <label>关键词
+            <input type="text" id="kwInput" placeholder="输入关键词" style="width:100%;min-width:220px" autocomplete="off">
+          </label>
           <div class="combo-list" id="kwUserCombo" style="display:none"></div>
         </div>
-        <label>用户名 <input type="text" id="searchUser" placeholder="可选" style="width:160px"></label>
-        <button class="primary" id="kwSearchBtn" type="button">搜索</button>
+        <button class="primary" id="kwSearchBtn" type="button">关键词搜索</button>
       </div>
+      <div class="status" id="kwStatus"></div>
       <div class="row mt">
         <label>开始日期 <input type="date" id="searchStart"></label>
         <button class="ghost" id="earliestBtn" type="button" title="设为最早（2000-01-01）">最早</button>
@@ -117,19 +129,28 @@ try {
         <button class="primary" id="searchBtn" type="button">按时间搜索</button>
         <button class="ghost" id="stopSearchBtn" type="button" style="display:none">停止搜索</button>
       </div>
-      <div class="status" id="kwStatus"></div>
       <div class="status" id="searchStatus"></div>
     </div>
     <div class="card">
-      <h2>搜索结果 <span id="resultCount" class="sub"></span></h2>
+      <h2>关键词结果 <span id="kwResultCount" class="sub"></span></h2>
+      <div class="row" style="margin-bottom:8px">
+        <button class="primary" id="kwSelectAllBtn" type="button">全选</button>
+        <button class="ghost" id="kwSelectNoneBtn" type="button">全不选</button>
+        <button class="success" id="kwDownloadSelectedBtn" type="button">下载勾选项</button>
+        <button class="ghost" id="kwClearBtn" type="button">清空</button>
+      </div>
+      <div class="result-list" id="kwResultList"><div class="empty">尚未搜索</div></div>
+    </div>
+    <div class="card">
+      <h2>按时间结果 <span id="resultCount" class="sub"></span></h2>
       <div class="row" style="margin-bottom:8px">
         <button class="primary" id="selectAllBtn" type="button" title="只勾选符合上方「普通/R18 筛选」的结果">全选</button>
         <button class="ghost" id="selectNoneBtn" type="button">全不选</button>
         <button class="success" id="downloadSelectedBtn" type="button">下载勾选项</button>
-        <button class="ghost" id="saveSearchBtn" type="button" title="把当前搜索结果覆盖写入 search_cache.json">保存</button>
+        <button class="ghost" id="saveSearchBtn" type="button" title="把当前按时间结果覆盖写入 search_cache.json">保存</button>
         <button class="ghost" id="clearSearchBtn" type="button">清空列表</button>
-        <button class="ghost" id="exportSearchBtn" type="button" title="导出当前搜索记录为 JSON 文件">导出记录</button>
-        <button class="ghost" id="importSearchBtn" type="button" title="上传 JSON 文件导入搜索记录（按 id 合并，导入覆盖原有）">导入记录</button>
+        <button class="ghost" id="exportSearchBtn" type="button" title="导出当前按时间搜索记录为 JSON 文件">导出记录</button>
+        <button class="ghost" id="importSearchBtn" type="button" title="上传 JSON 文件导入搜索记录（按 id 合并）">导入记录</button>
         <input type="file" id="importSearchFile" accept=".json,application/json" style="display:none">
       </div>
       <div class="result-list" id="searchResultList"><div class="empty">尚未搜索</div></div>
@@ -140,17 +161,19 @@ try {
   <div class="tab-panel" id="panel-settings">
     <div class="card">
       <h2>下载路径与命名</h2>
-      <p class="hint">直连后端填本机路径；Aria2 后端填 Aria2 所在机器上的路径。模板变量：{TITLE} {ALIAS} {ID} {AUTHOR} {QUALITY} {UPLOADTIME} {NOWTIME}</p>
-      <div class="row">
+      <p class="hint">直连后端填本机路径；Aria2 后端填 Aria2 所在机器上的路径。模板不要写 <code>.mp4</code>，保存时自动补扩展名。</p>
+      <div class="row" style="align-items:flex-end">
         <label style="flex:1">下载根目录
           <input type="text" id="set-downloadPath" placeholder="下载路径根目录" style="width:100%">
         </label>
+        <button class="ghost" id="browsePathBtn" type="button" title="读取本地选择目录">📂</button>
       </div>
       <div class="row mt">
         <label style="flex:1">文件名模板
-          <input type="text" id="set-fileNameTemplate" style="width:100%">
+          <input type="text" id="set-fileNameTemplate" placeholder="Iwara_-_{TITLE}_[{ID}]_[{QUALITY}]" style="width:100%">
         </label>
       </div>
+      <p class="hint" style="margin-top:8px">可用变量：<code>{TITLE}</code> 标题　<code>{ALIAS}</code> 作者显示名　<code>{AUTHOR}</code> 作者用户名　<code>{ID}</code> 视频 id　<code>{QUALITY}</code> 清晰度（Source / 540 / 360）　<code>{UPLOADTIME}</code> 上传时间　<code>{NOWTIME}</code> 下载时的当前时间</p>
       <div class="row mt">
         <label>作者子目录
           <select id="set-useAuthorSubdir">
@@ -158,6 +181,20 @@ try {
             <option value="true">是</option>
           </select>
         </label>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>点赞 / 关注</h2>
+      <p class="hint">需已登录 Iwara。下载时自动点赞/关注失败不会中断下载。搜索标注依赖接口返回的 liked 字段。</p>
+      <div class="row">
+        <label><input type="checkbox" id="set-showLikedInSearch"> 搜索列表标注已点赞</label>
+      </div>
+      <div class="row mt">
+        <label><input type="checkbox" id="set-autoLike"> 下载视频时自动点赞</label>
+      </div>
+      <div class="row mt">
+        <label><input type="checkbox" id="set-autoFollow"> 下载视频时自动关注作者</label>
       </div>
     </div>
 
@@ -194,8 +231,8 @@ try {
       </div>
       <div class="row mt">
         <button id="gbLoginCheckBtn" type="button">检测登录状态</button>
-        <span id="gbLoginStatus"></span>
       </div>
+      <pre id="gbLoginStatus" class="login-detect"></pre>
     </div>
 
     <div class="card">
@@ -205,6 +242,18 @@ try {
         <button class="primary" id="changePwdBtn" type="button">修改</button>
       </div>
       <div class="status" id="pwdStatus"></div>
+    </div>
+
+    <div class="card">
+      <h2>视频索引</h2>
+      <p class="hint">总表 <code>iwara-index.json</code>：以视频 id 为键，只存作者名/用户名、标题、fileId、时长、tags、上传日。不算 hash。下载目录本机可写则写到那里；Aria2 远程路径写不了时写到服务数据目录。可导入别人 dump，或扫描下载目录 json。</p>
+      <div class="row">
+        <button class="primary" id="exportIndexBtn" type="button">⬇ 导出索引</button>
+        <button class="ghost" id="importIndexBtn" type="button">⬆ 导入索引</button>
+        <button class="ghost" id="scanIndexBtn" type="button">扫描下载目录</button>
+        <input type="file" id="importIndexFile" accept=".json,application/json" style="display:none">
+      </div>
+      <div class="status" id="indexStatus"></div>
     </div>
 
     <div class="card">
@@ -226,5 +275,20 @@ try {
 </div>
 
 <script src="app.js"></script>
+
+<div class="modal-mask" id="browseMask" style="display:none">
+  <div class="modal">
+    <div class="modal-head">
+      <b>选择下载目录</b>
+      <button class="ghost" id="browseClose" type="button">✕</button>
+    </div>
+    <div class="browse-path" id="browsePath"></div>
+    <div class="browse-list" id="browseList"></div>
+    <div class="row mt">
+      <button class="primary" id="browseSelect" type="button">选择此目录</button>
+      <span class="hint" id="browseHint"></span>
+    </div>
+  </div>
+</div>
 </body>
 </html>

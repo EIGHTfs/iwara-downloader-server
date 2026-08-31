@@ -17,6 +17,7 @@ const api = require("./lib/iwara-api");
 const downloader = require("./lib/downloader");
 const search = require("./lib/search-cache");
 const dataBackup = require("./lib/data-backup");
+const videoIndex = require("./lib/video-index");
 
 const PUBLIC_DIR = path.join(__dirname, "public");
 const MIME = {
@@ -149,6 +150,7 @@ function serveStatic(req, res, pathname) {
     const ext = path.extname(filePath).toLowerCase();
     const headers = { "Content-Type": MIME[ext] || "application/octet-stream" };
     if (ext === ".html" || ext === ".js" || ext === ".css") headers["Cache-Control"] = "no-cache, no-store, must-revalidate";
+    if (ext === ".ico" || ext === ".png") headers["Cache-Control"] = "public, max-age=86400";
     res.writeHead(200, headers);
     fs.createReadStream(filePath).pipe(res);
   });
@@ -175,7 +177,7 @@ const server = http.createServer(async (req, res) => {
         if (err) return sendJson(res, 404, { ok: false, error: "脚本不存在" });
         res.writeHead(200, {
           "Content-Type": "text/javascript; charset=utf-8",
-          "Content-Disposition": "attachment; filename=iwara-cred-fetch.user.js",
+          "Content-Disposition": "inline; filename=iwara-cred-fetch.user.js",
           "Cache-Control": "no-store"
         });
         res.end(data);
@@ -206,6 +208,20 @@ const server = http.createServer(async (req, res) => {
       const c = cfg.readConfig();
       return sendJson(res, 200, { ok: true, needsSetup: !c.passwordHash, needsAuth: !!c.passwordHash, port: c.port || 8643 });
     }
+    // aria2 拉取本机生成的 sidecar JSON（短链带 HMAC，不走登录 cookie）
+    if (method === "GET" && pathname === "/api/index-sidecar") {
+      const id = String(parsed.query.id || "").trim();
+      const k = String(parsed.query.k || "").trim();
+      const buf = videoIndex.readFetchableSidecar(id, k);
+      if (!buf) return sendJson(res, 404, { ok: false, error: "not found" });
+      res.writeHead(200, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Content-Disposition": "inline; filename=\"" + id.replace(/[^\w.-]+/g, "_") + ".json\"",
+        "Cache-Control": "no-store",
+        "Content-Length": buf.length
+      });
+      return res.end(buf);
+    }
     if (method === "GET" && pathname === "/api/thumb") {
       const fileId = String(parsed.query.file || "").trim();
       const n = String(parsed.query.n || "0");
@@ -228,6 +244,25 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 401, { ok: false, error: "未登录" });
     }
 
+    // ---- 本机目录浏览（设置页「读取本地选择」下载路径，对照 gbmd /api/browse）----
+    if (method === "GET" && pathname === "/api/browse") {
+      const p = String(parsed.query.path || "").trim();
+      const dir = p && p.startsWith("/") ? p : "/";
+      try {
+        if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
+          return sendJson(res, 400, { ok: false, error: "目录不存在: " + dir });
+        }
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        const dirs = entries
+          .filter((e) => e.isDirectory() && e.name !== "@eaDir" && e.name !== "#recycle" && e.name !== ".git")
+          .map((e) => e.name)
+          .sort();
+        return sendJson(res, 200, { ok: true, path: dir, parent: dir === "/" ? null : path.dirname(dir), dirs });
+      } catch (e) {
+        return sendJson(res, 400, { ok: false, error: e.message || String(e) });
+      }
+    }
+
     // ---- 设置 ----
     if (method === "GET" && pathname === "/api/settings") {
       return sendJson(res, 200, { ok: true, settings: publicSettings(cfg.readConfig()) });
@@ -244,10 +279,18 @@ const server = http.createServer(async (req, res) => {
           if (parsed.accessToken) body.iwaraAccessToken = parsed.accessToken;
         }
       }
-      const allowed = ["iwaraCookie", "iwaraToken", "iwaraAccessToken", "downloadBackend", "concurrency", "aria2Path", "aria2Token", "downloadPath", "fileNameTemplate", "useAuthorSubdir", "sessionHours", "port", "checkDownloadLink"];
+      const allowed = ["iwaraCookie", "iwaraToken", "iwaraAccessToken", "downloadBackend", "concurrency", "aria2Path", "aria2Token", "downloadPath", "fileNameTemplate", "useAuthorSubdir", "showLikedInSearch", "autoLike", "autoFollow", "sessionHours", "port", "checkDownloadLink"];
       for (const k of allowed) {
         if (body[k] === undefined) continue;
         if ((k === "iwaraCookie" || k === "iwaraToken" || k === "iwaraAccessToken" || k === "aria2Token") && String(body[k]).trim() === "") continue;
+        if (k === "showLikedInSearch" || k === "autoLike" || k === "autoFollow" || k === "useAuthorSubdir" || k === "checkDownloadLink") {
+          c[k] = body[k] === true || body[k] === "true" || body[k] === 1 || body[k] === "1";
+          continue;
+        }
+        if (k === "fileNameTemplate") {
+          c[k] = String(body[k] || "").trim().replace(/\.(mp4|webm|mov)$/i, "") || "Iwara_-_{TITLE}_[{ID}]_[{QUALITY}]";
+          continue;
+        }
         c[k] = body[k];
       }
       cfg.writeConfig(c);
@@ -271,12 +314,24 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { ok: true });
     }
 
-    // ---- Iwara 检测 ----
-    if (method === "GET" && pathname === "/api/iwara-check") {
+    // ---- Iwara 账号检测（油猴 / 设置页共用）----
+    if (method === "GET" && pathname === "/api/account-check") {
       const c = cfg.readConfig();
-      if (!c.iwaraCookie && !c.iwaraToken) return sendJson(res, 200, { ok: true, cookieSet: false, checked: false, message: "未配置 Cookie / Token" });
+      const cookie = String(c.iwaraCookie || "");
+      const cookieItems = cookie ? cookie.split(";").map((s) => s.trim()).filter(Boolean) : [];
+      const cred = {
+        hasCookie: !!cookie.trim(),
+        cookieChars: cookie.length,
+        cookieItems: cookieItems.length,
+        hasCfClearance: /(?:^|;\s*)cf_clearance=/.test(cookie),
+        hasToken: !!(c.iwaraToken && String(c.iwaraToken).trim()),
+        hasAccessToken: !!(c.iwaraAccessToken && String(c.iwaraAccessToken).trim())
+      };
+      if (!c.iwaraCookie && !c.iwaraToken) {
+        return sendJson(res, 200, { ok: true, cookieSet: false, checked: false, message: "未配置 Cookie / Token", cred });
+      }
       const r = await api.checkLogin();
-      return sendJson(res, 200, Object.assign({ cookieSet: !!(c.iwaraCookie || c.iwaraToken), checked: true }, r));
+      return sendJson(res, 200, Object.assign({ cookieSet: !!(c.iwaraCookie || c.iwaraToken), checked: true, cred }, r));
     }
     if (method === "GET" && pathname === "/api/following") {
       try {
@@ -310,6 +365,7 @@ const server = http.createServer(async (req, res) => {
         user: String(parsed.query.user || ""),
         search: String(parsed.query.search || ""),
         rating: String(parsed.query.rating || "all"),
+        type: String(parsed.query.type || "videos"),
         subscribed: parsed.query.subscribed === "1"
       };
       try {
@@ -333,8 +389,7 @@ const server = http.createServer(async (req, res) => {
           contentFilter,
           startTs,
           endTs,
-          user: String(body.user || ""),
-          search: String(body.search || body.query || "")
+          user: String(body.user || "")
         });
         return sendJson(res, 200, { ok: true, started: true, task: t });
       } catch (e) {
@@ -395,6 +450,37 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 400, { ok: false, error: "导入失败: " + (e && e.message || e) });
       } finally {
         try { fs.unlinkSync(zipPath); } catch (_) {}
+      }
+    }
+
+    // ---- 下载索引（精简：id → 作者/标题/fileId/时长/tags/上传日；不算 hash）----
+    if (method === "GET" && pathname === "/api/index") {
+      const c = cfg.readConfig();
+      return sendJson(res, 200, Object.assign({ ok: true }, videoIndex.listCatalog(c.downloadPath)));
+    }
+    if (method === "GET" && pathname === "/api/index/export") {
+      const c = cfg.readConfig();
+      const buf = videoIndex.catalogFileBuffer(c.downloadPath);
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="iwara-index-${new Date().toISOString().slice(0, 10)}.json"`);
+      return res.end(buf);
+    }
+    if (method === "POST" && pathname === "/api/index/import") {
+      const c = cfg.readConfig();
+      const body = await readBody(req, 64 * 1024 * 1024);
+      const payload = body && (body.videos || body.items || body.dump || body);
+      try {
+        return sendJson(res, 200, videoIndex.importPayload(c.downloadPath, payload));
+      } catch (e) {
+        return sendJson(res, 400, { ok: false, error: "导入失败: " + (e && e.message || e) });
+      }
+    }
+    if (method === "POST" && pathname === "/api/index/scan") {
+      const c = cfg.readConfig();
+      try {
+        return sendJson(res, 200, videoIndex.scanDownloadDir(c.downloadPath));
+      } catch (e) {
+        return sendJson(res, 400, { ok: false, error: "扫描失败: " + (e && e.message || e) });
       }
     }
 

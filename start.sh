@@ -11,10 +11,21 @@ SERVER_DIR="$ROOT/server"
 PID_FILE="$SERVER_DIR/app.pid"
 LOG_FILE="$SERVER_DIR/server.log"
 
+# 群晖 DSM 默认 PATH 没有 node；把套件路径补上
+export PATH="/usr/local/bin:/var/packages/Node.js_v22/target/usr/local/bin:/var/packages/Node.js_v20/target/usr/local/bin:$PATH"
+NODE_BIN="$(command -v node 2>/dev/null || true)"
+for c in /usr/local/bin/node /var/packages/Node.js_v22/target/usr/local/bin/node /var/packages/Node.js_v20/target/usr/local/bin/node; do
+  if [ -z "$NODE_BIN" ] && [ -x "$c" ]; then NODE_BIN="$c"; fi
+done
+if [ -z "$NODE_BIN" ]; then
+  echo "❌ 找不到 node（请安装 Node.js 套件）"
+  exit 1
+fi
+
 # ---- 端口：命令行参数 > config.json > 默认 8643 ----
 PORT="${1:-}"
 if [ -z "$PORT" ]; then
-  PORT="$(node -e "try{const c=require(process.argv[1]);console.log(c.port||8643)}catch(e){console.log(8643)}" "$SERVER_DIR/config.json" 2>/dev/null || echo 8643)"
+  PORT="$("$NODE_BIN" -e "try{const c=require(process.argv[1]);console.log(c.port||8643)}catch(e){console.log(8643)}" "$SERVER_DIR/config.json" 2>/dev/null || echo 8643)"
 fi
 
 # ---- 已在运行？ ----
@@ -28,7 +39,11 @@ if [ -f "$PID_FILE" ] && [ -s "$PID_FILE" ]; then
 fi
 
 cd "$SERVER_DIR" || exit 1
-setsid nohup node app.js --port "$PORT" > "$LOG_FILE" 2>&1 < /dev/null &
+if command -v setsid >/dev/null 2>&1; then
+  setsid nohup "$NODE_BIN" app.js --port "$PORT" > "$LOG_FILE" 2>&1 < /dev/null &
+else
+  nohup "$NODE_BIN" app.js --port "$PORT" > "$LOG_FILE" 2>&1 < /dev/null &
+fi
 echo $! > "$PID_FILE"
 NEW_PID="$(cat "$PID_FILE")"
 

@@ -118,7 +118,7 @@ function httpsJson(url, opts = {}) {
                 if (res.statusCode === 403) {
                   return done(new Error("CF_CHALLENGE:" + (text.includes("Just a moment") ? "cloudflare js challenge" : "http 403")));
                 }
-                if (res.statusCode === 204) return done(null, null);
+                if (res.statusCode === 204 || res.statusCode === 201) return done(null, text ? (() => { try { return JSON.parse(text); } catch (_) { return null; } })() : null);
                 if (res.statusCode >= 400) {
                   return done(new Error(`HTTP ${res.statusCode} for ${url}`));
                 }
@@ -194,27 +194,55 @@ function unwrapUser(raw) {
   return null;
 }
 
+function jwtExpMs(token) {
+  try {
+    const part = String(token || "").split(".")[1];
+    if (!part) return 0;
+    const json = Buffer.from(part.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
+    const p = JSON.parse(json);
+    return p && p.exp ? p.exp * 1000 : 0;
+  } catch (_) { return 0; }
+}
+
+const LOGIN_WARN_DAYS = 7;
+
+function loginExpiryMeta(c) {
+  const expiresAt = jwtExpMs(c && c.iwaraToken) || jwtExpMs(c && c.iwaraAccessToken) || 0;
+  const remainingMs = expiresAt ? expiresAt - Date.now() : 0;
+  const remainingDays = expiresAt ? remainingMs / 86400000 : null;
+  let warnLevel = "unknown";
+  if (!expiresAt) warnLevel = "unknown";
+  else if (remainingMs <= 0) warnLevel = "expired";
+  else if (remainingDays <= LOGIN_WARN_DAYS) warnLevel = "warn";
+  else warnLevel = "ok";
+  return { expiresAt, remainingMs, remainingDays, warnLevel, warnDays: LOGIN_WARN_DAYS };
+}
+
+function withExpiry(base) {
+  return Object.assign({}, base, loginExpiryMeta(cfg.readConfig()));
+}
+
 /** 检测登录态：GET /user 200 = 已登录，403 CF 挑战 = cookie 失效 */
 async function checkLogin() {
   try {
     try { await ensureAccessToken(false); } catch (_) {}
     const raw = await fetchJson(`https://${API_HOST}/user`, { withAuth: false, retries: 1 });
     const user = unwrapUser(raw);
-    return { ok: true, loggedIn: true, user: user && (user.name || user.username || user.id), userId: user && user.id, username: user && user.username };
+    return withExpiry({ ok: true, loggedIn: true, user: user && (user.name || user.username || user.id), userId: user && user.id, username: user && user.username });
   } catch (e) {
     const msg = String(e.message || e);
-    if (msg.startsWith("CF_CHALLENGE")) return { ok: false, loggedIn: false, cfChallenge: true, error: "Cloudflare 挑战未通过：Cookie 缺少 cf_clearance 或已过期" };
+    if (msg.startsWith("CF_CHALLENGE")) return withExpiry({ ok: false, loggedIn: false, cfChallenge: true, error: "Cloudflare 挑战未通过：Cookie 缺少 cf_clearance 或已过期" });
     if (/HTTP 401/.test(msg) && cfg.readConfig().iwaraToken) {
       try {
         await ensureAccessToken(true);
         const raw = await fetchJson(`https://${API_HOST}/user`, { withAuth: false, retries: 1 });
         const user = unwrapUser(raw);
-        return { ok: true, loggedIn: true, user: user && (user.name || user.username || user.id), userId: user && user.id, username: user && user.username };
+        return withExpiry({ ok: true, loggedIn: true, user: user && (user.name || user.username || user.id), userId: user && user.id, username: user && user.username });
       } catch (e2) {
-        return { ok: false, loggedIn: false, error: String(e2.message || e2) };
+        return withExpiry({ ok: false, loggedIn: false, error: String(e2.message || e2) });
       }
     }
-    return { ok: false, loggedIn: false, error: msg };
+    return withExpiry({ ok: false, loggedIn: false, error: msg });
   }
 }
 
@@ -504,9 +532,69 @@ async function getVideoInfo(id) {
     thumbnail: raw.thumbnail,
     file: { name: raw.file?.name, size: raw.file?.size },
     quality: best.name,
+    liked: !!raw.liked,
+    following: !!(raw.user && raw.user.following),
     downloadUrl,
     raw
   };
+}
+
+async function postAuth(url) {
+  await ensureAccessToken(false);
+  try {
+    return await fetchJson(url, { method: "POST", withAuth: false, retries: 1, body: {} });
+  } catch (e) {
+    const msg = String(e && e.message || e);
+    if (/HTTP 401/.test(msg)) {
+      await ensureAccessToken(true);
+      return await fetchJson(url, { method: "POST", withAuth: false, retries: 1, body: {} });
+    }
+    // 已点赞 / 已关注：400/409 视为成功
+    if (/HTTP (400|409|422)/.test(msg)) return { ok: true, already: true };
+    throw e;
+  }
+}
+
+/** POST /video/{id}/like → 201 */
+async function likeVideo(id) {
+  const vid = String(id || "").trim();
+  if (!vid) throw new Error("缺视频 id");
+  await postAuth(`https://${API_HOST}/video/${encodeURIComponent(vid)}/like`);
+  return { ok: true };
+}
+
+/** POST /user/{userId}/followers → 201 */
+async function followUser(userId) {
+  const uid = String(userId || "").trim();
+  if (!uid) throw new Error("缺用户 id");
+  await postAuth(`https://${API_HOST}/user/${encodeURIComponent(uid)}/followers`);
+  return { ok: true };
+}
+
+/** 下载时按设置自动点赞/关注；失败只记日志，不抛。 */
+async function autoLikeFollow(info) {
+  const c = cfg.readConfig();
+  const out = { liked: false, followed: false, errors: [] };
+  if (!info || info.type === "external") return out;
+  if (c.autoLike && !info.liked) {
+    try {
+      await likeVideo(info.id);
+      out.liked = true;
+    } catch (e) {
+      out.errors.push("like: " + (e && e.message || e));
+      console.error("[iwara-api] autoLike 失败:", e && e.message || e);
+    }
+  }
+  if (c.autoFollow && info.authorId && !info.following) {
+    try {
+      await followUser(info.authorId);
+      out.followed = true;
+    } catch (e) {
+      out.errors.push("follow: " + (e && e.message || e));
+      console.error("[iwara-api] autoFollow 失败:", e && e.message || e);
+    }
+  }
+  return out;
 }
 
 // ============================================================
@@ -529,13 +617,22 @@ async function listVideos(q = {}) {
   // 关键词搜索必须走 /search 端点（type=videos + query），
   // /videos?search= 的结果不相关（实测「奥黛塔」只返回无关内容）。
   // 参考网页搜索：https://www.iwara.tv/search?type=videos&page=0&query=奥黛塔
+  try { await ensureAccessToken(false); } catch (_) {}
   if (q.search) {
-    params.set("type", q.type || "videos");
+    const type = q.type || "videos";
+    params.set("type", type);
     params.set("query", q.search);
+    if (type === "users") {
+      params.set("sort", "relevance");
+      params.delete("rating");
+      params.delete("user");
+    } else {
+      params.set("sort", "date");
+    }
     const url = `https://${API_HOST}/search?${params.toString()}`;
     console.log(`[iwara-api] listVideos(search): ${url}`);
     const data = await fetchJson(url, { withAuth: false, retries: 2 });
-    return data; // { results:[Video], count, page, limit }
+    return data; // { results:[Video|User], count, page, limit }
   }
   const url = `https://${API_HOST}/videos?${params.toString()}`;
   console.log(`[iwara-api] listVideos: ${url}`);
@@ -566,4 +663,4 @@ async function getComments(id) {
   return out.join("\n");
 }
 
-module.exports = { getXVersion, checkLogin, getVideoInfo, listVideos, getUserProfile, getComments, ensureAccessToken, listFollowing, listFollowingPage, thumbnailUrl, fetchThumbnail, API_HOST, DEFAULT_UA, IWARA_CF_IP };
+module.exports = { getXVersion, checkLogin, getVideoInfo, listVideos, getUserProfile, getComments, ensureAccessToken, listFollowing, listFollowingPage, likeVideo, followUser, autoLikeFollow, thumbnailUrl, fetchThumbnail, API_HOST, DEFAULT_UA, IWARA_CF_IP };

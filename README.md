@@ -13,7 +13,7 @@
 | 📤 发送到服务器 | 油猴脚本把当前视频链接一键推给服务器添加下载任务（手动填地址 + 自动在线探测） |
 | 🌐 CF 绕过 | IP 直连 `104.26.12.12` + SNI + 精简 UA，绕开 DNS 污染与 Cloudflare 拦截 |
 | 🔄 CDN 子域轮换 | 失败自动换可用子域；成功/失败列表持久化到本机 |
-| 📁 文件名模板 | 学油猴脚本变量替换：`Iwara_-_{TITLE}_[{ID}]_[{QUALITY}].mp4` |
+| 📁 文件名模板 | 学油猴脚本变量替换：`Iwara_-_{TITLE}_[{ID}]_[{QUALITY}]`（不要写 `.mp4`，落盘自动补） |
 | 🚀 双下载后端 | `direct`（Node 直连，断点续传）/ `aria2`（JSON-RPC 推送） |
 | 📦 启停脚本 | `start.sh` / `stop.sh` / `restart.sh` / `status.sh` |
 
@@ -97,7 +97,7 @@ node server/app.js --set-password "你的密码"
   "iwaraCookie": "",
   "downloadBackend": "direct",
   "downloadPath": "/path/to/your/Iwara/",
-  "fileNameTemplate": "Iwara_-_{TITLE}_[{ID}]_[{QUALITY}].mp4",
+  "fileNameTemplate": "Iwara_-_{TITLE}_[{ID}]_[{QUALITY}]",
   "useAuthorSubdir": false
 }
 ```
@@ -131,7 +131,7 @@ node server/app.js --set-password "你的密码"
 | `{UPLOADTIME}` | 上传时间 |
 | `{NOWTIME}` | 当前时间 |
 
-默认：`Iwara_-_{TITLE}_[{ID}]_[{QUALITY}].mp4`  
+默认：`Iwara_-_{TITLE}_[{ID}]_[{QUALITY}]`（不要写扩展名，落盘自动补 `.mp4`）  
 例：`Iwara_-_耀佳音与知更鸟摇一摇_[ZsvQjWn9XNQvAy]_[Source].mp4`
 
 ---

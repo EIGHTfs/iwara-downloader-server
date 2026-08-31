@@ -31,10 +31,15 @@ const DEFAULT_CONFIG = {
   downloadPath: "",
   // 文件名模板（学油猴脚本 downloadPath.ts 的变量替代，可自定义）：
   //   支持 {TITLE} {ALIAS} {ID} {AUTHOR} {QUALITY} {UPLOADTIME} {NOWTIME}
-  //   例：Iwara_-_{TITLE}_[{ID}]_[{QUALITY}].mp4
-  fileNameTemplate: "Iwara_-_{TITLE}_[{ID}]_[{QUALITY}].mp4",
+  //   例：Iwara_-_{TITLE}_[{ID}]_[{QUALITY}]  （不要写 .mp4）
+  fileNameTemplate: "Iwara_-_{TITLE}_[{ID}]_[{QUALITY}]",
   // 文件名模板占位（保留原始文件名，仅作者子目录）：<root>/<作者>/<原名>
   useAuthorSubdir: false,
+  // 搜索结果标注已点赞（列表带 ❤️）
+  showLikedInSearch: true,
+  // 下载时自动点赞 / 关注作者（需已登录 Iwara）
+  autoLike: false,
+  autoFollow: false,
   // 访问密码（scrypt 哈希，空 = 不设密码）
   passwordSalt: "",
   passwordHash: "",
