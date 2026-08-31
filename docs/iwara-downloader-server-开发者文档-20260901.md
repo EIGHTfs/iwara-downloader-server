@@ -1,6 +1,6 @@
 # iwara-downloader-server 开发者文档
 
-> 版本：**1.0.1**（2026-09-01）
+> 版本：**1.0.2**（2026-09-01）
 > 运行环境：fnOS / Node.js v18+（实测 Node v24.19.0），零依赖 HTTP 服务，默认端口 8643
 > 对照：本文件结构对齐 `gbmd-开发者文档-20260827.md`（项目结构 / API / 下载流程 / 配置 / 坑）
 
@@ -13,7 +13,7 @@
 3. [API 总览](#3-api-总览)
 4. [认证与鉴权](#4-认证与鉴权)
 5. [设置类 API](#5-设置类-api)
-6. [Iwara 检测 / 视频解析](#6-iwara-检测--视频解析)
+6. [Iwara 检测 / 关注用户 / 视频解析](#6-iwara-检测--关注用户--视频解析)
 7. [搜索 API](#7-搜索-api)
 8. [下载/任务 API](#8-下载任务-api)
 9. [用户数据备份 API](#9-用户数据备份-api)
@@ -21,7 +21,7 @@
 11. [前端（gbmd 纯前端模板）](#11-前端gbmd-纯前端模板)
 12. [配置文件与数据文件](#12-配置文件与数据文件)
 13. [注意事项/坑](#13-注意事项坑)
-14. [1.0.1 相对 1.0.0 的变更](#14-101-相对-100-的变更)
+14. [变更日志](#14-变更日志)
 
 ---
 
@@ -46,6 +46,7 @@ iwara-downloader-server/
     ├── search_task.json                # 按时间搜索任务（gitignore）
     ├── search_cache.json               # 搜索记录缓存（gitignore）
     ├── cdn_hosts_state.json            # CDN 子域 GOOD/BAD（gitignore）
+    ├── following_cache.json            # 关注用户列表缓存（增量同步，gitignore）
     ├── server.log / app.pid
     ├── lib/
     │   ├── iwara-api.js                # Iwara API（IP 直连 + 精简 UA + X-Version）
@@ -58,80 +59,81 @@ iwara-downloader-server/
         └── iwara-cred-fetch.user.js
 ```
 
-**双副本部署（本机实测）**
-
-| 路径 | 用途 |
-|---|---|
-| `/vol1/@appdata/.../会话/iwara-downloader-server/` | 工作副本（改代码在这里） |
-| `/vol02/1000-0-1c60be7b/iwara-downloader-server/` | 运行副本（fnOS 上 `./start.sh`，端口 **28463**） |
-
-改代码后必须 `cp` 到运行副本再 `./restart.sh`，否则旧 PID 仍跑旧代码。
-
 ---
 
 ## 2. 启动/停止/状态
 
 ```bash
-./start.sh              # 端口：命令行 > config.json.port > 8643
-./start.sh 28463        # 指定端口
-./stop.sh
-./restart.sh
-./status.sh
-node server/app.js --set-password "你的密码"
-node server/app.js --port 9000
+cd /path/to/iwara-downloader-server
+./start.sh          # 后台启动，写 server/app.pid
+./stop.sh           # 读 pid 发 SIGTERM
+./restart.sh        # stop + start
+./status.sh         # 打印进程 / 端口 / 是否在线
 ```
 
-健康检查：`GET /api/status`（启动脚本最多等 8 秒）。
-
-未设密码：只警告、可直接用（`needsSetup: true`）。局域网内任何人可访问。
+多份副本并存机制：每个副本独立 `config.json` + pid 文件。本机开发在 `/vol1/.../会话/iwara-downloader-server/`，NAS 运行时在 `/vol02/1000-0-1c60be7b/iwara-downloader-server/`，改完必须 `cp` 两份 + `./restart.sh`。
 
 ---
 
 ## 3. API 总览
 
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| POST | `/api/login` | 登录（返回 session cookie） |
-| POST | `/api/logout` | 登出 |
-| GET | `/api/status` | `{ needsSetup, needsAuth, port }` |
-| GET | `/api/settings` | 读设置（不含密码哈希） |
-| POST | `/api/settings` | 写设置 |
-| POST | `/api/change-password` | 改密码（至少 4 位） |
-| POST | `/api/token` | 单独写 `iwaraToken`（油猴推送） |
-| GET | `/api/iwara-check` | 检测 Iwara 登录态 |
-| GET | `/api/videos` | 关键词 / 列表（官网同款 `/search`） |
-| GET | `/api/video-info` | 解析单个视频（fresh 直链预览） |
-| POST | `/api/search` | 按时间搜索（后台翻页） |
-| GET | `/api/search-status` | 搜索任务状态 |
-| POST | `/api/search/stop` | 停止搜索（保留已找到结果） |
-| GET | `/api/search/cache` | 搜索记录缓存 |
-| POST | `/api/search/clear` | 清空缓存 |
-| POST | `/api/search/import` | 导入搜索记录（按 id 合并，导入覆盖） |
-| POST | `/api/search/save` | 当前结果覆盖写入 `search_cache.json` |
-| GET | `/api/search/export` | 导出搜索记录 JSON |
-| GET | `/api/data/export` | zip 导出全部用户数据 |
-| POST | `/api/data/import` | zip 导入（base64） |
-| POST | `/api/download` | 发起下载 `{ items:[{id,title,author}] }` |
-| GET | `/api/task` | 下载任务状态 |
-| POST | `/api/task/pause` `/resume` `/stop` `/retry` | 任务控制 |
-| POST | `/api/task/concurrency` | 设并发 `{ n }` |
-| GET | `/userscript` | 油猴脚本附件下载 |
+| 方法 | 路径 | 鉴权 | 说明 |
+|---|---|---|---|
+| GET | `/api/status` | 否 | 服务状态（needsAuth / port） |
+| GET | `/api/thumb` | 否 | 视频封面（IP 直连 i.iwara.tv） |
+| POST | `/api/login` | 否 | 登录 → Set-Cookie: session |
+| POST | `/api/logout` | 是 | 销毁 session |
+| GET | `/api/settings` | 是 | 读配置（脱敏，不回传明文） |
+| POST | `/api/settings` | 是 | 保存配置（支持组合文本） |
+| POST | `/api/change-password` | 是 | 设密码（≥4 位） |
+| POST | `/api/token` | 是 | 单独保存 iwaraToken |
+| GET | `/api/iwara-check` | 是 | 登录态检测 |
+| GET | `/api/following` | 是 | 关注用户列表（增量同步） |
+| GET | `/api/videos` | 否 | 视频列表（关键词走 `/search?query=`） |
+| POST | `/api/search` | 是 | 按时间后台翻页 |
+| GET | `/api/search-status` | 是 | 查询任务进度 |
+| POST | `/api/search/stop` | 是 | 停止搜索 |
+| GET | `/api/search/cache` | 是 | 查缓存 |
+| POST | `/api/search/save` | 是 | 保存缓存 |
+| POST | `/api/search/import` | 是 | 导入记录（按 id 合并覆盖） |
+| GET | `/api/search/export` | 是 | 下载 JSON |
+| POST | `/api/search/clear` | 是 | 清缓存 |
+| GET | `/api/video-info` | 是 | 解析单视频直链 |
+| POST | `/api/download` | 是 | 提交下载任务 |
+| GET | `/api/task` | 是 | 查询任务状态 |
+| POST | `/api/task/pause` | 是 | 暂停 |
+| POST | `/api/task/resume` | 是 | 继续 |
+| POST | `/api/task/stop` | 是 | 停止 |
+| POST | `/api/task/retry` | 是 | 重跑失败项 |
+| POST | `/api/task/concurrency` | 是 | 改并发数 |
+| GET | `/api/data/export` | 是 | 下载用户数据 zip |
+| POST | `/api/data/import` | 是 | 导入用户数据 zip |
+
+**鉴权**：设置密码后所有 `/api/*` 需要 cookie `session=xxx`。没设密码（`needsAuth:false`）全部放行。公共静态资源（index.html / login.html / favicon / js / css）无需鉴权。
 
 ---
 
 ## 4. 认证与鉴权
 
-- 首次未设密码 → `POST /api/login` 直接成功（`noPassword: true`），页面顶部黄条警告。
-- 已设密码 → body `{"password":"..."}`，`Set-Cookie: session=...; HttpOnly; SameSite=Lax`。
-- 所有 `/api/*`（除 login / logout / status）需 cookie；无密码时 `requireAuth` 直接放行。
-- 静态页 `index.html` 本身不强制登录；前端 `api()` 遇 401 跳 `/login.html`。
-- `/userscript` 免鉴权（手机浏览器直接安装油猴脚本）。
+### 登录
 
-```bash
-curl -c /tmp/iw.c -X POST http://127.0.0.1:8643/api/login \
-  -H 'Content-Type: application/json' -d '{"password":"..."}'
-curl -b /tmp/iw.c http://127.0.0.1:8643/api/task
 ```
+POST /api/login
+Content-Type: application/json
+{ "password": "xxx" }
+→ Set-Cookie: session=<jwt>; Path=/; HttpOnly; SameSite=Lax; Max-Age=<sessionHours*3600>
+{ ok: true }
+```
+
+密码用 scrypt 哈希存 `config.json`（passwordSalt + passwordHash）。
+
+### 登出
+
+```
+POST /api/logout → { ok: true }
+```
+
+服务端发 `Set-Cookie: session=; Path=/; HttpOnly; Max-Age=0`。
 
 ---
 
@@ -139,21 +141,50 @@ curl -b /tmp/iw.c http://127.0.0.1:8643/api/task
 
 ### GET /api/settings
 
-返回 `{ ok, settings }`。`settings` 不含 `passwordHash` / `passwordSalt`。
+脱敏返回，不回传明文：
+
+```json
+{
+  "ok": true,
+  "settings": {
+    "port": 28463,
+    "downloadBackend": "aria2",
+    "concurrency": 3,
+    "aria2Path": "https://10.10.10.4:xxx/jsonrpc",
+    "downloadPath": "/volume3/WORKGROUP/",
+    "fileNameTemplate": "Iwara_-_{TITLE}_[{ID}]_[{QUALITY}].mp4",
+    "useAuthorSubdir": false,
+    "sessionHours": 72,
+    "hasCookie": true,
+    "hasToken": true,
+    "hasAria2Token": true
+  }
+}
+```
+
+注意：`hasCookie` / `hasToken` / `hasAria2Token` 只表示磁盘有值，**不反回明文**。前端保存时留空 = 不改。
 
 ### POST /api/settings
 
-允许字段：`iwaraCookie` `iwaraToken` `downloadBackend` `concurrency` `aria2Path` `aria2Token` `downloadPath` `fileNameTemplate` `useAuthorSubdir` `sessionHours` `port` `checkDownloadLink`。
-
-`iwaraCookie` 可直接粘贴油猴组合文本：
-
+```json
+{
+  "downloadPath": "/volume3/WORKGROUP/",
+  "downloadBackend": "aria2",
+  "concurrency": 3,
+  "aria2Path": "https://...",
+  "aria2Token": "abc",           // 留空不改
+  "iwaraCookie": "...\nToken=...\nAccessToken=...",
+  "fileNameTemplate": "...",
+  "useAuthorSubdir": false,
+  "sessionHours": 72
+}
 ```
-Cookie=...
-Token=...
-AccessToken=...
-```
 
-服务端 `parseCredentialText` 会拆开写入对应字段。
+**兼容油猴组合文本**：`Cookie=...\nToken=...\nAccessToken=...` 会被 `parseCredentialText` 拆成三个字段分别写入 `iwaraCookie` / `iwaraToken` / `iwaraAccessToken`。
+
+允许字段白名单：`iwaraCookie`, `iwaraToken`, `iwaraAccessToken`, `downloadBackend`, `concurrency`, `aria2Path`, `aria2Token`, `downloadPath`, `fileNameTemplate`, `useAuthorSubdir`, `sessionHours`, `port`, `checkDownloadLink`。敏感字段为空字符串时跳过不覆盖。
+
+返回同上（脱敏）。
 
 ### POST /api/change-password
 
@@ -161,7 +192,7 @@ AccessToken=...
 { "password": "新密码" }
 ```
 
-scrypt 哈希写入 `config.json`。
+密码至少 4 位。scrypt 哈希覆盖写入。
 
 ### POST /api/token
 
@@ -169,37 +200,97 @@ scrypt 哈希写入 `config.json`。
 { "iwaraToken": "..." }
 ```
 
+单独保存 refresh_token（供油猴凭证获取器推送）。
+
 ---
 
-## 6. Iwara 检测 / 视频解析
+## 6. Iwara 检测 / 关注用户 / 视频解析
 
 ### GET /api/iwara-check
 
-未配 Cookie → `{ cookieSet:false }`。否则 `GET https://api.iwara.tv/user`：
+```json
+// 未配置
+{ "ok": true, "cookieSet": false, "checked": false, "message": "未配置 Cookie / Token" }
 
-- 200 → `{ loggedIn:true, user }`
-- CF 挑战 → `{ cfChallenge:true }`
+// 已登录
+{ "ok": true, "cookieSet": true, "checked": true, "loggedIn": true,
+  "user": "fluquormyosotis", "userId": "c1d1cf1f-...", "username": "fluquormyosotis" }
+
+// CF 挑战
+{ "ok": false, "loggedIn": false, "cfChallenge": true,
+  "error": "Cloudflare 挑战未通过：Cookie 缺少 cf_clearance 或已过期" }
+```
+
+内部会先 `ensureAccessToken`（用 iwaraToken 刷 access_token 并持久化）。401 时自动再刷一次重试。
+
+### GET /api/following
+
+分页 / 增量同步两用。
+
+**分页（默认）**
+
+```
+GET /api/following?page=0&limit=50
+```
+
+```json
+{ "ok": true, "count": 2516, "me": { "id":"...", "username":"...", "name":"..." },
+  "following": [{ "id","username","name","following":true,"createdAt":"" }, ...],
+  "page": 0, "limit": 50, "synced": null, "added": null, "fetchedPages": null }
+```
+
+**全量（强制刷新）**
+
+```
+GET /api/following?all=1
+GET /api/following?all=1&refresh=1   # 清内存缓存
+```
+
+返回同上，多出 `synced` / `added` / `fetchedPages`。
+
+**增量同步规则**（`following_cache.json` 落盘，10 分钟内存 TTL）：
+- 首次拉满所有页
+- 之后从 page 0 往后，直到碰上本地已有的用户 → **新增 = 这部分前缀**
+- 合并 = 新增 + 原有（从重合点起）
+- **原有 + 新增 < 远端 count** → 有取关或本地不完整，才继续往更旧的页找（避免每次全量翻 51 页）
+- `mode` 取值：`full` / `incr` / `incr-backfill` / `no-overlap` / `backfill`
+
+实测：2516 人首次 51 页约 14s；无变化 1 页 481ms；模拟头部 +3 人 1 页 891ms。
+
+### GET /api/thumb
+
+公开接口，绕过鉴权让未登录也能预览封面。IP 直连 `i.iwara.tv/image/thumbnail/{fileId}/thumbnail-{n}.jpg`。
+
+```
+GET /api/thumb?file=<fileId>&n=<0..>
+```
+
+返回原始图片字节（JPEG / WebP），`Content-Type` 对应，`Cache-Control: public, max-age=86400`。
+
+前端示例：
+
+```html
+<img src="/api/thumb?file=a610e581-...&n=5" loading="lazy">
+```
 
 ### GET /api/videos
 
 Query：`sort`（date/trending/views）、`page`、`limit`、`user`、`search`、`rating`（all/general/ecchi）、`subscribed=1`。
 
-**关键词必须走官网同款端点**，不要用 `/videos?search=`：
+**关键词必须走 `/search?query=`，不用 `/videos?search=`**（实测「奥黛塔」用后者只有 4 条垃圾，前者 12 条正确）。
 
 ```
-GET https://api.iwara.tv/search?type=videos&page=0&query=奥黛塔
+GET /api/videos?search=奥黛塔&rating=all&page=0&limit=20
+GET /api/videos?user=xxx&rating=general
+GET /api/videos?subscribed=1
 ```
 
-实测「奥黛塔」：`/videos?search=` 返回 4 条垃圾；`/search?query=` 返回 12 条正确结果。
-
-无关键词时走 `GET /videos?sort=&page=`。`rating=ecchi` / `general` 对应前端「R18 / 普通」。
+返回 `{ ok, count, page, limit, results: [Video] }`。Video 字段：`id, slug, title, body, rating, thumbnail, file (id/name/size), user (id/username/name), createdAt, numLikes, numViews, numComments, tags`。
 
 ### GET /api/video-info?id=<id>
 
-`getVideoInfo`：
-
-1. `GET /video/{id}`
-2. 若 `embedUrl` → `{ type:"external" }`（无直链）
+1. `GET /video/{id}` → RAW 响应
+2. 有 `embedUrl` → `{ type:"external" }`（无直链）
 3. 否则拉 `fileUrl` 源列表 JSON，按 Source > 540 > 360 选 `src.download`
 4. `downloadUrl = decodeURIComponent("https:" + src.download)`（带 `expires`）
 
@@ -224,7 +315,6 @@ X-Version：`SHA1([pathname末段, expires, 密钥].join('_'))`，密钥 `mSvL05
 ```
 
 实现（`server/lib/search-cache.js`）：
-
 - 调 `listVideos({ sort:"date", rating })` 翻页（limit 48）
 - 用 `createdAt` 过滤 `[startTs, endTs)`
 - `contentFilter` → `rating=all|general|ecchi`，再用 `video.rating` 二次筛
@@ -255,7 +345,9 @@ X-Version：`SHA1([pathname末段, expires, 密钥].join('_'))`，密钥 `mSvL05
   "createdAt": "2026-...",
   "dateAdded": 1750000000,
   "rating": "ecchi",
-  "isNsfw": true
+  "isNsfw": true,
+  "thumbnail": 5,
+  "file": { "id":"a610e581-...", "name":"...", "size":107512609 }
 }
 ```
 
@@ -378,6 +470,7 @@ X-Version：`SHA1([pathname末段, expires, 密钥].join('_'))`，密钥 `mSvL05
 - `server/search_cache.json`
 - `server/search_task.json`
 - `server/cdn_hosts_state.json`
+- `server/following_cache.json`
 - `server/server.log`
 - `server/app.pid`
 
@@ -388,7 +481,7 @@ X-Version：`SHA1([pathname末段, expires, 密钥].join('_'))`，密钥 `mSvL05
 ## 10. 下载流程详解（重点）
 
 ```
-items[] 
+items[]
   → 校验 downloadPath
   → 按 useAuthorSubdir 拼 savePath（默认否：直接根目录）
   → 对每一项：
@@ -426,7 +519,7 @@ API、direct 下载、aria2 `header` 都必须带这个。aria2 默认 `aria2/1.
 
 ### 10.3 直链过期
 
-`downloadUrl` 带 `expires`（Unix 秒），几分钟失效。旧 URL 换任何 CDN 子域都没用。  
+`downloadUrl` 带 `expires`（Unix 秒），几分钟失效。旧 URL 换任何 CDN 子域都没用。
 `runDownloadLoop` 的 **direct 与 aria2 两个分支**都先 `getVideoInfo`。
 
 ### 10.4 CDN 子域动态列表
@@ -442,8 +535,8 @@ API、direct 下载、aria2 `header` 都必须带这个。aria2 默认 `aria2/1.
 
 ### 10.5 文件名
 
-模板变量：`{TITLE}` `{ALIAS}` `{ID}` `{AUTHOR}` `{QUALITY}` `{UPLOADTIME}` `{NOWTIME}`。  
-默认：`Iwara_-_{TITLE}_[{ID}]_[{QUALITY}].mp4`。  
+模板变量：`{TITLE}` `{ALIAS}` `{ID}` `{AUTHOR}` `{QUALITY}` `{UPLOADTIME}` `{NOWTIME}`。
+默认：`Iwara_-_{TITLE}_[{ID}]_[{QUALITY}].mp4`。
 非法字符替换为 `_`。`useAuthorSubdir` 默认 **false**。
 
 ### 10.6 aria2 后端
@@ -457,7 +550,7 @@ API、direct 下载、aria2 `header` 都必须带这个。aria2 默认 `aria2/1.
 - 提交成功后本服务标 `submitted`；真实进度在 Aria2 WebUI
 - 写目录权限不够时表现为拿到 Content-Length 后速度 0 / abort——先给目标目录写权限
 
-实测（权限放开后）：`KzQf3RIaBEf5vL` → 107,512,609 bytes complete，路径  
+实测（权限放开后）：`KzQf3RIaBEf5vL` → 107,512,609 bytes complete，路径
 `/volume3/WORKGROUP/Iwara_-_奥黛塔 经纪人的性爱计划 Day1_[KzQf3RIaBEf5vL]_[Source].mp4`
 
 ---
@@ -478,10 +571,12 @@ API、direct 下载、aria2 `header` 都必须带这个。aria2 默认 `aria2/1.
 
 裁掉香蕉网专属：游戏映射、角色下拉、找回模式、hash 反查、目录合并。
 
-接回的模板功能（1.0.1）：
+接回的模板功能（1.0.1+）：
 
-- 搜索：关键词 + 按时间 + 普通/R18 + 保存/清空/导入导出记录
-- 设置：导出/导入用户数据 zip
+- 搜索：关键词 + 按时间 + 普通/R18 + **选关注用户**（下拉组合框）+ 保存/清空/导入导出记录
+- 设置：导出/导入用户数据 zip；**Cookie 留空不改**；组合文本拆开存
+- 视频搜索列加封面缩略图（走 `/api/thumb` 代理）
+- 登录后自动拉关注列表；头部 +N 后增量同步
 
 `api(path, method, body)` 遇 401 → `/login.html`。不要加载 `mock-api.js`。
 
@@ -497,6 +592,7 @@ API、direct 下载、aria2 `header` 都必须带这个。aria2 默认 `aria2/1.
 |---|---|
 | `port` | 默认 8643 |
 | `iwaraToken` | refresh_token |
+| `iwaraAccessToken` | 由 refresh_token 自动刷新，服务自己写 |
 | `iwaraCookie` | 完整 Cookie；过期/`deleted` 的 `_ga` 不要传给 aria2 |
 | `downloadBackend` | `direct` / `aria2` |
 | `concurrency` | 直连并发，1~8 |
@@ -506,6 +602,7 @@ API、direct 下载、aria2 `header` 都必须带这个。aria2 默认 `aria2/1.
 | `fileNameTemplate` | 见 §10.5 |
 | `useAuthorSubdir` | 默认 false |
 | `sessionHours` | 默认 72 |
+| `checkDownloadLink` | 预留，当前 false |
 
 ### GitHub 推送凭据
 
@@ -532,6 +629,8 @@ bash scripts/git-push.sh
 7. aria2：UA header、DSM 证书、`dir` 权限、NAS DNS → 104.26.12.12。
 8. 用户数据（config / cookie / token / 任务 / 搜索缓存 / `.git-push-token`）全部 gitignore。
 9. 前端交给模板复用：先改 `docs/ui-template` 对应结构，不要另起一套 DOM。
+10. **Cookie 保存填组合文本**：多行 `Cookie=...\nToken=...\nAccessToken=...` 会被拆开存；留空不覆盖。
+11. **关注列表增量同步**：落 `following_cache.json`，内存 10 分钟 TTL；首次全量，之后只拉头部新增。
 
 **改动后必测**
 
@@ -540,10 +639,24 @@ bash scripts/git-push.sh
 3. 关键词「奥黛塔」条数与官网一致
 4. `POST /api/download` 用网页 API，不手搓过期链接
 5. aria2 场景：tellStatus 有 totalLength 且能 complete
+6. 新建 `following_cache.json` 后重启，页面显示关注数量正确
 
 ---
 
-## 14. 1.0.1 相对 1.0.0 的变更
+## 14. 变更日志
+
+### 1.0.2（本次）
+
+| 项 | 说明 |
+|---|---|
+| 关注列表 | 增量同步 `following_cache.json`；首次全量，之后只拉头部新增；原有+新增<总数才往后翻页补齐 |
+| 搜索封面 | 结果行加缩略图；公开接口 `GET /api/thumb` 走本机 IP 直连 |
+| 搜索栏 | 「选关注用户」下拉组合框：登录后拉关注列表，输入过滤，选中后填入用户名并搜索 |
+| Cookie 保存 | 修复「保存后回填旧值」：GET /api/settings 脱敏不回明文；留空不改；组合文本拆存；config.js 加 `iwaraAccessToken` 字段 |
+| 登录态 | `checkLogin` 自动刷新 access_token；401 时再刷一次重试 |
+| 鉴权 | `publicSettings()` 提到模块顶层，返回含 `hasCookie`/`hasToken`/`hasAria2Token` 标志 |
+
+### 1.0.1
 
 | 项 | 1.0.0 | 1.0.1 |
 |---|---|---|
@@ -557,4 +670,6 @@ bash scripts/git-push.sh
 | 文档 | README | + TROUBLESHOOTING + 本开发者文档 |
 | 推送 | 无 | `scripts/git-push.sh` + `.git-push-token` |
 
-**不要提交**：`server/config.json`、任务/缓存 json、日志、视频、token 文件。
+---
+
+**不要提交**：`server/config.json`、任务/缓存 json、日志、视频、token 文件、`following_cache.json`（用户凭据衍生产物）。
