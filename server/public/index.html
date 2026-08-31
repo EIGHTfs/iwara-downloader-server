@@ -103,6 +103,10 @@ try {
             <option value="views">观看最多</option>
           </select>
         </label>
+        <div style="position:relative">
+          <label>选关注用户 <input type="text" id="kwUserInput" placeholder="登录后加载关注列表" style="width:160px" autocomplete="off" title="从当前登录账号拉取关注用户，输入过滤，选中后填入用户名并搜索"></label>
+          <div class="combo-list" id="kwUserCombo" style="display:none"></div>
+        </div>
         <label>用户名 <input type="text" id="searchUser" placeholder="可选" style="width:160px"></label>
         <button class="primary" id="kwSearchBtn" type="button">搜索</button>
       </div>
@@ -175,7 +179,7 @@ try {
       </div>
       <div class="row mt">
         <label style="flex:1">Aria2 Token
-          <input type="password" id="set-aria2Token" placeholder="RPC 密钥" style="width:100%">
+          <input type="password" id="set-aria2Token" placeholder="已保存则留空不改" style="width:100%">
         </label>
       </div>
     </div>
@@ -185,7 +189,7 @@ try {
       <p class="hint">可粘贴油猴脚本复制的组合文本（Cookie= / Token= / AccessToken=），或只填 Cookie。油猴脚本见页头「油猴脚本」。</p>
       <div class="row">
         <label style="flex:1">Cookie / 凭证文本
-          <textarea id="set-iwaraCookie" rows="4" placeholder="Cookie 或油猴组合文本" style="width:100%"></textarea>
+          <textarea id="set-iwaraCookie" rows="4" placeholder="粘贴新凭证后点保存；留空表示不改已保存的值" style="width:100%"></textarea>
         </label>
       </div>
       <div class="row mt">

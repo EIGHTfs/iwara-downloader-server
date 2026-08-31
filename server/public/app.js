@@ -259,6 +259,7 @@ function bindSearch() {
 
   $("#kwSearchBtn").addEventListener("click", runSearch);
   $("#kwInput").addEventListener("keydown", (e) => { if (e.key === "Enter") runSearch(); });
+  bindFollowingCombo();
 
   $("#searchBtn").addEventListener("click", async () => {
     const startDate = $("#searchStart").value;
@@ -436,6 +437,16 @@ async function runSearch() {
   $("#kwSearchBtn").disabled = false;
 }
 
+function thumbSrc(v) {
+  const fileId = v && v.file && v.file.id;
+  if (fileId) {
+    const n = Number.isFinite(Number(v.thumbnail)) ? Number(v.thumbnail) : 0;
+    return "/api/thumb?file=" + encodeURIComponent(fileId) + "&n=" + n;
+  }
+  if (v && typeof v.thumbnailUrl === "string" && v.thumbnailUrl.indexOf("/api/thumb") === 0) return v.thumbnailUrl;
+  return "";
+}
+
 function renderSearchResults() {
   const box = $("#searchResultList");
   const shown = applyRatingFilter(searchResults);
@@ -445,13 +456,91 @@ function renderSearchResults() {
     const author = videoAuthor(v);
     const when = v.createdAt ? new Date(v.createdAt).toLocaleString("zh-CN", { hour12: false }) : "";
     const tag = videoNsfw(v) ? '<span class="badge nsfw">R18</span>' : '<span class="badge normal">普通</span>';
+    const src = thumbSrc(v);
+    const img = src
+      ? `<img class="row-thumb" src="${esc(src)}" alt="" loading="lazy" onerror="this.style.display='none'">`
+      : `<div class="row-thumb" style="background:var(--card2)"></div>`;
     return `<div class="result-item">
       <input type="checkbox" data-id="${esc(videoId(v))}">
+      ${img}
       <div class="name"><b>${esc(v.title || v.name || v.id)}</b> ${tag}
         <div class="meta">${esc(author)} · ${esc(videoId(v))} · ${esc(when)}</div>
       </div>
     </div>`;
   }).join("");
+}
+
+let followingUsers = [];
+function bindFollowingCombo() {
+  const input = $("#kwUserInput");
+  const combo = $("#kwUserCombo");
+  if (!input || !combo) return;
+  function renderCombo(filter) {
+    const q = String(filter || "").trim().toLowerCase();
+    const matched = q
+      ? followingUsers.filter((u) => (u.name + " " + u.username).toLowerCase().includes(q))
+      : followingUsers;
+    const shown = matched.slice(0, 20);
+    if (!shown.length) { combo.innerHTML = '<div class="combo-empty">无匹配用户</div>'; combo.style.display = "block"; return; }
+    combo.innerHTML = shown.map((u) => {
+      const label = u.name && u.username && u.name !== u.username ? (u.name + " · " + u.username) : (u.name || u.username);
+      return `<div class="combo-item" data-v="${esc(u.username || u.id)}">${esc(label)}</div>`;
+    }).join("");
+    combo.style.display = "block";
+  }
+  function pickUser(username) {
+    input.value = username;
+    $("#searchUser").value = username;
+    combo.style.display = "none";
+    runSearch();
+  }
+  input.addEventListener("focus", () => { if (followingUsers.length) renderCombo(input.value); });
+  input.addEventListener("input", () => renderCombo(input.value));
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown") {
+      const items = document.querySelectorAll("#kwUserCombo .combo-item");
+      if (items.length) { e.preventDefault(); const cur = document.querySelector("#kwUserCombo .combo-item.hover") || items[0]; cur.classList.remove("hover"); (cur.nextElementSibling || items[0]).classList.add("hover"); }
+    } else if (e.key === "ArrowUp") {
+      const items = document.querySelectorAll("#kwUserCombo .combo-item");
+      if (items.length) { e.preventDefault(); const cur = document.querySelector("#kwUserCombo .combo-item.hover") || items[0]; cur.classList.remove("hover"); (cur.previousElementSibling || items[items.length - 1]).classList.add("hover"); }
+    } else if (e.key === "Enter") {
+      const cur = document.querySelector("#kwUserCombo .combo-item.hover");
+      if (cur) { e.preventDefault(); pickUser(cur.dataset.v); }
+    } else if (e.key === "Escape") {
+      combo.style.display = "none";
+    }
+  });
+  document.addEventListener("click", (e) => {
+    const item = e.target.closest && e.target.closest("#kwUserCombo .combo-item");
+    if (item) { pickUser(item.dataset.v); return; }
+    if (!e.target.closest("#kwUserInput") && !e.target.closest("#kwUserCombo")) combo.style.display = "none";
+  });
+}
+
+async function loadFollowingUsers() {
+  const input = $("#kwUserInput");
+  if (!input) return;
+  try {
+    const r = await api("/api/following?limit=50");
+    if (!r.ok) throw new Error(r.error || "失败");
+    followingUsers = r.following || [];
+    const total = r.count || followingUsers.length;
+    input.placeholder = total ? ("过滤关注用户（" + followingUsers.length + "/" + total + "）") : "无关注用户";
+    const st = $("#kwStatus");
+    if (st && followingUsers.length) setStatus(st, "已加载关注用户 " + followingUsers.length + "/" + total + "（输入过滤；完整列表增量同步）", "ok");
+    if (total > followingUsers.length) {
+      api("/api/following?all=1").then((full) => {
+        if (full && full.ok && Array.isArray(full.following)) {
+          followingUsers = full.following;
+          const extra = full.synced ? (" · " + full.synced + (full.added ? " +" + full.added : "") + (full.fetchedPages ? " " + full.fetchedPages + "页" : "")) : "";
+          input.placeholder = "过滤 " + followingUsers.length + " 个关注";
+          if (st) setStatus(st, "关注列表 " + followingUsers.length + " / " + (full.count || followingUsers.length) + extra, "ok");
+        }
+      }).catch(() => {});
+    }
+  } catch (e) {
+    input.placeholder = "未登录或加载失败";
+  }
 }
 
 function bindTheme() {
@@ -487,8 +576,16 @@ function fillSettings(s) {
   $("#set-concurrency").value = settings.concurrency || 3;
   $("#concurrencyInput").value = settings.concurrency || 3;
   $("#set-aria2Path").value = settings.aria2Path || "";
-  $("#set-aria2Token").value = settings.aria2Token || "";
-  $("#set-iwaraCookie").value = settings.iwaraCookie || "";
+  if (!$("#set-aria2Token").value) {
+    $("#set-aria2Token").placeholder = settings.hasAria2Token ? "已保存则留空不改" : "RPC 密钥";
+  }
+  // Cookie 框只在空着时回填一次：保存后不要把旧值盖回刚贴进去的新凭证
+  const cookieEl = $("#set-iwaraCookie");
+  if (cookieEl && !cookieEl.value.trim()) {
+    cookieEl.placeholder = settings.hasCookie
+      ? "已保存 Cookie（再贴新凭证才会覆盖；留空不改）"
+      : "粘贴 Cookie 或油猴组合文本后点保存";
+  }
 }
 
 function bindSettings() {
@@ -502,13 +599,21 @@ function bindSettings() {
         downloadBackend: $("#set-downloadBackend").value,
         concurrency: parseInt($("#set-concurrency").value, 10) || 3,
         aria2Path: $("#set-aria2Path").value.trim(),
-        aria2Token: $("#set-aria2Token").value,
-        iwaraCookie: $("#set-iwaraCookie").value
+        aria2Token: $("#set-aria2Token").value
       };
+      const credText = $("#set-iwaraCookie").value;
+      if (credText && credText.trim()) body.iwaraCookie = credText;
       const r = await api("/api/settings", "POST", body);
       if (!r.ok) throw new Error(r.error || "保存失败");
+      const cookieEl = $("#set-iwaraCookie");
+      if (cookieEl) {
+        cookieEl.value = "";
+        cookieEl.placeholder = "已保存（再贴新凭证才会覆盖；留空不改）";
+        cookieEl.dataset.filled = "1";
+      }
       fillSettings(r.settings);
-      setStatus($("#settingsStatus"), "已保存", "ok");
+      setStatus($("#settingsStatus"), "已保存凭证与设置", "ok");
+      loadFollowingUsers();
     } catch (e) {
       setStatus($("#settingsStatus"), e.message, "err");
     }
@@ -533,6 +638,7 @@ function bindSettings() {
       if (!r.cookieSet) { el.textContent = "尚未配置 Cookie"; el.className = "status err"; return; }
       el.textContent = r.loggedIn ? ("已登录：" + (r.user || "")) : ((r.error || "未登录") + (r.cfChallenge ? "（需含 cf_clearance）" : ""));
       el.className = "status " + (r.loggedIn ? "ok" : "err");
+      if (r.loggedIn) loadFollowingUsers();
     } catch (e) {
       el.textContent = e.message;
       el.className = "status err";
@@ -609,6 +715,7 @@ async function init() {
     const s = await api("/api/settings");
     if (s.ok) fillSettings(s.settings);
   } catch (_) {}
+  loadFollowingUsers();
   try {
     const c = await api("/api/search/cache");
     if (c.cache && Array.isArray(c.cache.results) && c.cache.results.length) {

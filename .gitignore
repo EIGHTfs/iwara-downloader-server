@@ -5,6 +5,7 @@ server/download_task.json
 server/search_cache.json
 server/search_task.json
 server/cdn_hosts_state.json
+server/following_cache.json
 server/app.pid
 server/*.bak-*
 *.pid

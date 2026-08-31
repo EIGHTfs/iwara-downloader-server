@@ -109,6 +109,15 @@ function requireAuth(req) {
   return auth.isValidSession(auth.extractToken(req));
 }
 
+function publicSettings(c) {
+  const { passwordHash, passwordSalt, iwaraCookie, iwaraToken, iwaraAccessToken, aria2Token, ...safe } = c;
+  return Object.assign({}, safe, {
+    hasCookie: !!(iwaraCookie && String(iwaraCookie).trim()),
+    hasToken: !!(iwaraToken && String(iwaraToken).trim()),
+    hasAria2Token: !!(aria2Token && String(aria2Token).trim())
+  });
+}
+
 function serveStatic(req, res, pathname) {
   let filePath = path.join(PUBLIC_DIR, pathname === "/" ? "index.html" : pathname);
   if (!filePath.startsWith(PUBLIC_DIR)) { res.writeHead(403); res.end("Forbidden"); return; }
@@ -181,6 +190,22 @@ const server = http.createServer(async (req, res) => {
       const c = cfg.readConfig();
       return sendJson(res, 200, { ok: true, needsSetup: !c.passwordHash, needsAuth: !!c.passwordHash, port: c.port || 8643 });
     }
+    if (method === "GET" && pathname === "/api/thumb") {
+      const fileId = String(parsed.query.file || "").trim();
+      const n = String(parsed.query.n || "0");
+      if (!fileId) return sendJson(res, 400, { ok: false, error: "缺 file" });
+      try {
+        const img = await api.fetchThumbnail(fileId, n);
+        res.writeHead(200, {
+          "Content-Type": img.contentType,
+          "Content-Length": img.buf.length,
+          "Cache-Control": "public, max-age=86400"
+        });
+        return res.end(img.buf);
+      } catch (e) {
+        return sendJson(res, 404, { ok: false, error: String(e.message || e) });
+      }
+    }
 
     // ---- 需鉴权 ----
     if (pathname.startsWith("/api/") && !requireAuth(req)) {
@@ -189,9 +214,7 @@ const server = http.createServer(async (req, res) => {
 
     // ---- 设置 ----
     if (method === "GET" && pathname === "/api/settings") {
-      const c = cfg.readConfig();
-      const { passwordHash, passwordSalt, ...safe } = c;
-      return sendJson(res, 200, { ok: true, settings: safe });
+      return sendJson(res, 200, { ok: true, settings: publicSettings(cfg.readConfig()) });
     }
     if (method === "POST" && pathname === "/api/settings") {
       const body = await readBody(req);
@@ -200,18 +223,19 @@ const server = http.createServer(async (req, res) => {
       if (typeof body.iwaraCookie === "string") {
         const parsed = parseCredentialText(body.iwaraCookie);
         if (parsed) {
-          if (parsed.cookie !== null) body.iwaraCookie = parsed.cookie;
-          if (parsed.token !== null) { body.iwaraToken = parsed.token; delete body.token; }
-          if (parsed.accessToken !== null && !c.iwaraAccessToken) c.iwaraAccessToken = parsed.accessToken;
+          if (parsed.cookie) body.iwaraCookie = parsed.cookie;
+          if (parsed.token) { body.iwaraToken = parsed.token; delete body.token; }
+          if (parsed.accessToken) body.iwaraAccessToken = parsed.accessToken;
         }
       }
-      const allowed = ["iwaraCookie", "iwaraToken", "downloadBackend", "concurrency", "aria2Path", "aria2Token", "downloadPath", "fileNameTemplate", "useAuthorSubdir", "sessionHours", "port", "checkDownloadLink"];
+      const allowed = ["iwaraCookie", "iwaraToken", "iwaraAccessToken", "downloadBackend", "concurrency", "aria2Path", "aria2Token", "downloadPath", "fileNameTemplate", "useAuthorSubdir", "sessionHours", "port", "checkDownloadLink"];
       for (const k of allowed) {
-        if (body[k] !== undefined) c[k] = body[k];
+        if (body[k] === undefined) continue;
+        if ((k === "iwaraCookie" || k === "iwaraToken" || k === "iwaraAccessToken" || k === "aria2Token") && String(body[k]).trim() === "") continue;
+        c[k] = body[k];
       }
       cfg.writeConfig(c);
-      const out = cfg.readConfig();
-      return sendJson(res, 200, { ok: true, settings: out, parsedFromText: !!body.__credsParsed });
+      return sendJson(res, 200, { ok: true, settings: publicSettings(cfg.readConfig()), parsedFromText: !!parseCredentialText(typeof body.iwaraCookie === "string" ? body.iwaraCookie : "") });
     }
     if (method === "POST" && pathname === "/api/change-password") {
       const body = await readBody(req);
@@ -234,9 +258,31 @@ const server = http.createServer(async (req, res) => {
     // ---- Iwara 检测 ----
     if (method === "GET" && pathname === "/api/iwara-check") {
       const c = cfg.readConfig();
-      if (!c.iwaraCookie) return sendJson(res, 200, { ok: true, cookieSet: false, checked: false, message: "未配置 Cookie" });
+      if (!c.iwaraCookie && !c.iwaraToken) return sendJson(res, 200, { ok: true, cookieSet: false, checked: false, message: "未配置 Cookie / Token" });
       const r = await api.checkLogin();
-      return sendJson(res, 200, Object.assign({ cookieSet: true, checked: true }, r));
+      return sendJson(res, 200, Object.assign({ cookieSet: !!(c.iwaraCookie || c.iwaraToken), checked: true }, r));
+    }
+    if (method === "GET" && pathname === "/api/following") {
+      try {
+        const all = parsed.query.all === "1";
+        const force = parsed.query.refresh === "1";
+        const r = all
+          ? await api.listFollowing(force)
+          : await api.listFollowingPage(parsed.query.page || 0, parsed.query.limit || 50);
+        return sendJson(res, 200, {
+          ok: true,
+          count: r.count || r.following.length,
+          me: r.me,
+          following: r.following,
+          page: r.page,
+          limit: r.limit,
+          synced: r.synced,
+          added: r.added,
+          fetchedPages: r.fetchedPages
+        });
+      } catch (e) {
+        return sendJson(res, 200, { ok: false, error: String(e.message || e) });
+      }
     }
 
     // ---- 视频列表 / 搜索 ----

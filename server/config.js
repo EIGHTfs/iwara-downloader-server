@@ -18,6 +18,8 @@ const DEFAULT_CONFIG = {
   iwaraToken: "",
   // 完整 Cookie（含 cf_clearance；可空，IP 直连 + 精简 UA 时 API 层通常不依赖）
   iwaraCookie: "",
+  // access_token（由 refresh_token POST /user/token 刷新，关注列表等需登录接口用）
+  iwaraAccessToken: "",
   // 下载后端：direct（Node 直连） | aria2
   downloadBackend: "direct",
   // 直连下载并发数

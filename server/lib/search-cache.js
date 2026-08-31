@@ -55,7 +55,9 @@ function normalizeVideo(v) {
     dateAdded: v.dateAdded || Math.floor(createdMs(v) / 1000) || 0,
     rating: v.rating || (nsfw ? "ecchi" : "general"),
     isNsfw: nsfw,
-    thumbnail: v.thumbnail || null
+    thumbnail: v.thumbnail,
+    file: v.file ? { id: v.file.id, name: v.file.name, size: v.file.size } : undefined,
+    thumbnailUrl: api.thumbnailUrl(v)
   };
 }
 

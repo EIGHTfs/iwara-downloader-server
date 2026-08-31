@@ -120,7 +120,8 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary); o
   padding: 6px 4px;
   border-bottom: 1px solid var(--border);
 }
-.result-item .name { flex: 1; }
+.result-item .name { flex: 1; min-width: 0; }
+.result-item .row-thumb { margin-left: 0; }
 .result-item a { color: var(--primary); text-decoration: none; }
 .result-item .meta { color: var(--muted); font-size: 12px; }
 .badge { padding: 1px 8px; border-radius: 999px; font-size: 11px; }

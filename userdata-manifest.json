@@ -8,6 +8,7 @@
     { "rel": "server/search_cache.json",  "desc": "搜索记录缓存（保存/导入导出）" },
     { "rel": "server/search_task.json",   "desc": "按时间搜索任务状态（启动时恢复未完成搜索）" },
     { "rel": "server/cdn_hosts_state.json","desc": "CDN 子域动态列表（成功/失败，随下载自动增删）" },
+    { "rel": "server/following_cache.json","desc": "登录账号关注用户列表（按时间序增量同步，不入库）" },
     { "rel": "server/server.log",         "desc": "运行日志" },
     { "rel": "server/app.pid",            "desc": "进程 PID（启停脚本使用）" }
   ],

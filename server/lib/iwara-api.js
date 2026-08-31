@@ -15,11 +15,13 @@
 "use strict";
 
 const crypto = require("crypto");
+const fs = require("fs");
+const path = require("path");
 const https = require("https");
-const dns = require("dns");
 const zlib = require("zlib");
 
 const cfg = require("../config");
+const DATA_DIR = process.env.GBMD_DATA_DIR || path.join(__dirname, "..");
 
 const API_HOST = "api.iwara.tv";
 const X_VERSION_SECRET = "mSvL05GfEmeEmsEYfGCnVpEjYgTJraJN";
@@ -58,6 +60,7 @@ function configHeaders(urlString, withAuth) {
   };
   // Cookie（含 cf_clearance 过 CF 挑战；token 登录态一并带上）
   if (c.iwaraCookie) headers["Cookie"] = c.iwaraCookie;
+  if (c.iwaraAccessToken) headers["Authorization"] = "Bearer " + c.iwaraAccessToken;
   if (withAuth && urlString) headers["X-Version"] = getXVersion(urlString);
   // 诊断日志：确认发送了什么（不打印完整敏感值，只打标记）
   try {
@@ -70,7 +73,7 @@ function configHeaders(urlString, withAuth) {
 // ---------- 原生 https JSON 请求（替代 undici fetch，规避 CF 挑战） ----------
 function httpsJson(url, opts = {}) {
   const { retries = 3, timeoutMs = 30000, withAuth = true, method = "GET", body } = opts;
-  const headers = Object.assign(configHeaders(url, withAuth), opts.headers || {});
+  const headers = Object.assign({}, configHeaders(url, withAuth), opts.headers || {});
 
   return new Promise((resolve, reject) => {
     let attempt = 0;
@@ -165,16 +168,294 @@ async function fetchJson(url, opts = {}) {
 // 认证
 // ============================================================
 
+/** refresh_token → access_token（油猴 localStorage token） */
+async function ensureAccessToken(force) {
+  const c = cfg.readConfig();
+  if (!force && c.iwaraAccessToken) return c.iwaraAccessToken;
+  if (!c.iwaraToken) return c.iwaraAccessToken || "";
+  const data = await fetchJson(`https://${API_HOST}/user/token`, {
+    method: "POST",
+    withAuth: false,
+    retries: 1,
+    headers: { Authorization: "Bearer " + c.iwaraToken },
+    body: {}
+  });
+  const access = data && data.accessToken;
+  if (!access) throw new Error("刷新 accessToken 失败");
+  c.iwaraAccessToken = access;
+  cfg.writeConfig(c);
+  return access;
+}
+
+function unwrapUser(raw) {
+  if (!raw) return null;
+  if (raw.user && (raw.user.id || raw.user.username)) return raw.user;
+  if (raw.id || raw.username) return raw;
+  return null;
+}
+
 /** 检测登录态：GET /user 200 = 已登录，403 CF 挑战 = cookie 失效 */
 async function checkLogin() {
   try {
-    const user = await fetchJson(`https://${API_HOST}/user`, { withAuth: false, retries: 1 });
-    return { ok: true, loggedIn: true, user: user && (user.name || user.username || user) };
+    try { await ensureAccessToken(false); } catch (_) {}
+    const raw = await fetchJson(`https://${API_HOST}/user`, { withAuth: false, retries: 1 });
+    const user = unwrapUser(raw);
+    return { ok: true, loggedIn: true, user: user && (user.name || user.username || user.id), userId: user && user.id, username: user && user.username };
   } catch (e) {
     const msg = String(e.message || e);
     if (msg.startsWith("CF_CHALLENGE")) return { ok: false, loggedIn: false, cfChallenge: true, error: "Cloudflare 挑战未通过：Cookie 缺少 cf_clearance 或已过期" };
+    if (/HTTP 401/.test(msg) && cfg.readConfig().iwaraToken) {
+      try {
+        await ensureAccessToken(true);
+        const raw = await fetchJson(`https://${API_HOST}/user`, { withAuth: false, retries: 1 });
+        const user = unwrapUser(raw);
+        return { ok: true, loggedIn: true, user: user && (user.name || user.username || user.id), userId: user && user.id, username: user && user.username };
+      } catch (e2) {
+        return { ok: false, loggedIn: false, error: String(e2.message || e2) };
+      }
+    }
     return { ok: false, loggedIn: false, error: msg };
   }
+}
+
+/**
+ * 关注列表：按关注时间新→旧。落盘增量同步，不要每次全量翻页。
+ * 端点：GET /user/{id}/following
+ *
+ * 增量规则（列表按时间序）：
+ *   1. 从第 0 页往后拉，直到碰上本地已有的用户 = 新增
+ *   2. 合并 = 新增 + 原有（从重合点起）
+ *   3. 若合并条数 < 远端 total → 中间有删关注，才继续往更旧的页找
+ */
+const FOLLOW_FILE = path.join(DATA_DIR, "following_cache.json");
+const FOLLOW_LIMIT = 50;
+let followingMem = null;
+
+function mapFollowRow(r) {
+  const u = unwrapUser(r) || r;
+  const id = String((u && u.id) || "");
+  const username = String((u && (u.username || u.name)) || "");
+  if (!username && !id) return null;
+  return {
+    id,
+    username,
+    name: String((u && (u.name || u.username)) || username),
+    following: true,
+    createdAt: (r && r.createdAt) || (u && u.createdAt) || ""
+  };
+}
+
+function followKey(u) {
+  return String((u && (u.id || u.username)) || "");
+}
+
+function loadFollowingStore() {
+  if (followingMem && followingMem.following) return followingMem;
+  try {
+    if (fs.existsSync(FOLLOW_FILE)) {
+      const d = JSON.parse(fs.readFileSync(FOLLOW_FILE, "utf8"));
+      if (d && Array.isArray(d.following)) {
+        followingMem = d;
+        return followingMem;
+      }
+    }
+  } catch (_) {}
+  followingMem = null;
+  return null;
+}
+
+function saveFollowingStore(packed) {
+  followingMem = packed;
+  try {
+    fs.writeFileSync(FOLLOW_FILE, JSON.stringify({
+      me: packed.me,
+      following: packed.following,
+      count: packed.count,
+      updatedAt: new Date().toISOString()
+    }), "utf8");
+  } catch (e) {
+    console.error("[iwara-api] 写入 following_cache.json 失败:", e && e.message);
+  }
+}
+
+async function currentUser() {
+  await ensureAccessToken(false);
+  const meRaw = await fetchJson(`https://${API_HOST}/user`, { withAuth: false, retries: 1 });
+  const me = unwrapUser(meRaw);
+  if (!me || !me.id) throw new Error("未登录，无法获取关注列表");
+  return me;
+}
+
+async function listFollowingPage(page, limit, meOpt) {
+  const me = meOpt || await currentUser();
+  const lim = Math.max(1, Math.min(50, parseInt(limit, 10) || 50));
+  const pg = Math.max(0, parseInt(page, 10) || 0);
+  const data = await fetchJson(`https://${API_HOST}/user/${encodeURIComponent(me.id)}/following?page=${pg}&limit=${lim}`, { withAuth: false, retries: 1 });
+  const following = ((data && data.results) || []).map(mapFollowRow).filter(Boolean);
+  return {
+    me: { id: me.id, username: me.username, name: me.name },
+    following,
+    count: Number(data && data.count) || following.length,
+    page: pg,
+    limit: lim
+  };
+}
+
+function packFollowing(me, list, total, extra) {
+  return Object.assign({
+    me,
+    following: list,
+    count: total != null ? total : list.length
+  }, extra || {});
+}
+
+async function fetchFollowingPages(me, startPage, total, seen, out, maxPages) {
+  let pages = 0;
+  for (let page = startPage; page < maxPages && out.length < total; page++) {
+    const data = await listFollowingPage(page, FOLLOW_LIMIT, me);
+    pages++;
+    if (Number.isFinite(data.count)) total = data.count;
+    if (!data.following.length) break;
+    for (const u of data.following) {
+      const k = followKey(u);
+      if (!k || seen.has(k)) continue;
+      seen.add(k);
+      out.push(u);
+    }
+    if (data.following.length < FOLLOW_LIMIT) break;
+  }
+  return { total, pages };
+}
+
+/**
+ * 增量同步：列表按关注时间新→旧。
+ * 从 page0 拉到与本地重合 = 新增；合并 = 新增 + 原有（从重合点起）。
+ * 仅当「原有+新增 < 远端总数」才继续往更旧的页找（中间有删关注或本地不完整）。
+ */
+async function syncFollowing(force) {
+  const me = await currentUser();
+  const meInfo = { id: me.id, username: me.username, name: me.name };
+  const store = loadFollowingStore();
+  const cached = (!force && store && store.me && store.me.id === me.id && Array.isArray(store.following))
+    ? store.following
+    : [];
+
+  const first = await listFollowingPage(0, FOLLOW_LIMIT, me);
+  const total = first.count || first.following.length;
+  const maxPages = Math.min(120, Math.ceil((total || 1) / FOLLOW_LIMIT) + 2);
+
+  if (!cached.length) {
+    const out = first.following.slice();
+    const seen = new Set(out.map(followKey).filter(Boolean));
+    const r = await fetchFollowingPages(me, 1, total, seen, out, maxPages);
+    const packed = packFollowing(meInfo, out, r.total, { synced: "full", fetchedPages: 1 + r.pages, added: out.length });
+    saveFollowingStore(packed);
+    console.log(`[iwara-api] following sync full: local=${out.length} remote=${r.total} pages=${1 + r.pages}`);
+    return packed;
+  }
+
+  const cachedKey = new Set(cached.map(followKey).filter(Boolean));
+  const prefix = [];
+  const seen = new Set();
+  let overlapKey = null;
+  let page = 0;
+
+  outer:
+  for (; page < maxPages; page++) {
+    const data = page === 0 ? first : await listFollowingPage(page, FOLLOW_LIMIT, me);
+    const rows = data.following || [];
+    if (!rows.length) break;
+    for (const u of rows) {
+      const k = followKey(u);
+      if (!k || seen.has(k)) continue;
+      seen.add(k);
+      if (cachedKey.has(k)) {
+        overlapKey = k;
+        break outer;
+      }
+      prefix.push(u);
+    }
+    if (rows.length < FOLLOW_LIMIT) break;
+  }
+
+  let merged;
+  if (overlapKey) {
+    const idx = cached.findIndex((u) => followKey(u) === overlapKey);
+    const tail = idx >= 0 ? cached.slice(idx) : cached;
+    const seen2 = new Set();
+    merged = prefix.concat(tail).filter((u) => {
+      const k = followKey(u);
+      if (!k || seen2.has(k)) return false;
+      seen2.add(k);
+      return true;
+    });
+    for (const k of seen2) seen.add(k);
+  } else {
+    merged = prefix;
+  }
+
+  const added = prefix.length;
+  let fetchedPages = page + 1;
+  let mode = overlapKey ? "incr" : "no-overlap";
+
+  // 原有+新增 < 总数 → 有删关注或本地不完整：才往更旧的页找（从当前重合页起，seen 去重）
+  if (merged.length < total) {
+    mode = overlapKey ? "incr-backfill" : "backfill";
+    const r = await fetchFollowingPages(me, page, total, seen, merged, maxPages);
+    fetchedPages += r.pages;
+  }
+
+  const packed = packFollowing(meInfo, merged, total, { synced: mode, added, fetchedPages });
+  saveFollowingStore(packed);
+  console.log(`[iwara-api] following sync ${mode}: added=${added} local=${merged.length} remote=${total} pages=${fetchedPages}`);
+  return packed;
+}
+
+async function listFollowing(force) {
+  return syncFollowing(!!force);
+}
+
+/** 封面 URL（i.iwara.tv；浏览器侧请走 /api/thumb 以免 DNS 污染） */
+function thumbnailUrl(v) {
+  if (!v) return "";
+  if (typeof v.thumbnailUrl === "string" && v.thumbnailUrl) return v.thumbnailUrl;
+  if (typeof v.thumbnail === "string" && /^https?:/i.test(v.thumbnail)) return v.thumbnail;
+  const fileId = v.file && v.file.id;
+  if (!fileId) return "";
+  const n = Number.isFinite(Number(v.thumbnail)) ? Number(v.thumbnail) : 0;
+  return `https://i.iwara.tv/image/thumbnail/${fileId}/thumbnail-${n}.jpg`;
+}
+
+/** 封面图字节（IP 直连 i.iwara.tv） */
+function fetchThumbnail(fileId, n) {
+  const idx = Number.isFinite(Number(n)) ? Number(n) : 0;
+  const url = `https://i.iwara.tv/image/thumbnail/${fileId}/thumbnail-${idx}.jpg`;
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const req = https.request({
+      host: IWARA_CF_IP,
+      port: 443,
+      path: u.pathname,
+      method: "GET",
+      headers: { Host: u.hostname, "User-Agent": DEFAULT_UA, Referer: "https://www.iwara.tv/", Accept: "image/*,*/*" },
+      agent: HTTPS_AGENT,
+      servername: u.hostname
+    }, (res) => {
+      if (res.statusCode !== 200) {
+        res.resume();
+        return reject(new Error("HTTP " + res.statusCode));
+      }
+      const chunks = [];
+      res.on("data", (c) => chunks.push(c));
+      res.on("end", () => resolve({
+        buf: Buffer.concat(chunks),
+        contentType: res.headers["content-type"] || "image/jpeg"
+      }));
+    });
+    req.setTimeout(15000, () => req.destroy(new Error("封面超时")));
+    req.on("error", reject);
+    req.end();
+  });
 }
 
 /**
@@ -285,4 +566,4 @@ async function getComments(id) {
   return out.join("\n");
 }
 
-module.exports = { getXVersion, checkLogin, getVideoInfo, listVideos, getUserProfile, getComments, API_HOST, DEFAULT_UA, IWARA_CF_IP };
+module.exports = { getXVersion, checkLogin, getVideoInfo, listVideos, getUserProfile, getComments, ensureAccessToken, listFollowing, listFollowingPage, thumbnailUrl, fetchThumbnail, API_HOST, DEFAULT_UA, IWARA_CF_IP };
