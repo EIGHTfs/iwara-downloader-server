@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Iwara Cookie/Token 获取器 + 发送到服务器（按钮版）
 // @namespace    iwara-cred
-// @version      6.1.0
+// @version      6.2.0
 // @description  点右下角 🎫 复制完整 Cookie（含 HttpOnly cf_clearance）/token；新增「发送到服务器」：把当前视频链接一键推给 iwara-downloader-server 添加下载任务（手动填地址 + 自动在线探测）
 // @author       fnOS
 // @match        https://www.iwara.tv/*
@@ -20,7 +20,7 @@
 // ==/UserScript==
 
 /* ============================================================
- * v6.1.0：按钮获取模式 + 发送到服务器
+ * v6.2.0：按钮获取模式 + 发送到服务器
  * - 保留 v5 全部凭证采集/复制能力
  * - 「📤 发送到服务器」：把当前视频链接推给 iwara-downloader-server
  *     · 服务器地址手动填写（可保存），点击发送前先探测 /api/status
@@ -32,7 +32,7 @@
 (function () {
     "use strict";
 
-    const VER = "6.1.0";
+    const VER = "6.2.0";
 
     /* ---------- 工具 ---------- */
     function $(sel) { return document.querySelector(sel); }
@@ -141,8 +141,8 @@
     /** 发送视频链接到服务器 /api/download（服务端自动提取 ID 并加入下载任务） */
     async function sendVideoToServer(serverBase, videoUrl) {
         const r = await gmRequest("POST", serverBase + "/api/download", { items: [videoUrl] }, 12000);
-        if (r.ok && r.json && r.json.ok) return { ok: true, total: r.json.total || 1 };
-        return { ok: false, error: (r.json && r.json.error) || r.error || ("HTTP " + r.status) };
+        if (r.ok && r.json && r.json.ok) return { ok: true, total: r.json.total || 1, status: r.status };
+        return { ok: false, error: (r.json && r.json.error) || r.error || ("HTTP " + r.status), status: r.status };
     }
 
     /** 复制（GM_setClipboard 优先，降级 navigator.clipboard） */
@@ -171,8 +171,6 @@
     function injectStyle() {
         const style = document.createElement("style");
         style.textContent = `
-#iwcred-badge{position:fixed;top:8px;right:8px;z-index:2147483647;background:rgba(47,111,237,.92);color:#fff;
-  font:11px/1 system-ui,sans-serif;padding:5px 8px;border-radius:12px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.3)}
 #iwcred-fab{position:fixed;right:14px;bottom:14px;z-index:2147483647;width:56px;height:56px;border-radius:50%;
   background:#2f6fed;color:#fff;border:none;font-size:24px;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.35);
   -webkit-tap-highlight-color:transparent}
@@ -217,18 +215,10 @@
         document.head.appendChild(style);
     }
 
-    let fabEl, panelEl, badgeEl, toastEl;
+    let fabEl, panelEl, toastEl;
 
     function ensureUi() {
         if (!document.body) return false;
-        if (!badgeEl || !document.body.contains(badgeEl)) {
-            badgeEl = document.createElement("div");
-            badgeEl.id = "iwcred-badge";
-            badgeEl.textContent = "🎫 v" + VER;
-            badgeEl.title = "点我打开凭证面板";
-            document.body.appendChild(badgeEl);
-            badgeEl.addEventListener("click", showPanel);
-        }
         if (!fabEl || !document.body.contains(fabEl)) {
             fabEl = document.createElement("button");
             fabEl.id = "iwcred-fab";
@@ -345,12 +335,19 @@
                 if (inp) inp.value = base;
                 return;
             }
-            srvSetStatus(`服务器在线，正在发送视频…`, "info");
+            // 文档：/api/status 返回 needsAuth（是否设了访问密码）
+            if (probe.status && probe.status.needsAuth) {
+                srvSetStatus("⚠️ 服务器设有访问密码：请先在浏览器登录一次服务器网页（会话 cookie 会自动携带）", "err");
+                return;
+            }
+            srvSetStatus(`服务器在线（端口 ${probe.status.port || "?"}），正在发送视频…`, "info");
             const r = await sendVideoToServer(base, videoUrl);
             if (r.ok) {
                 srvSetStatus(`✅ 已发送，服务器已添加 ${r.total} 个下载任务`, "ok");
                 GM_setValue(SRV_KEY, base);
                 showToast("✅ 已发送到服务器");
+            } else if (r.status === 401) {
+                srvSetStatus("发送失败：未登录（401）。请先在浏览器打开服务器网页登录", "err");
             } else {
                 srvSetStatus(`发送失败：${r.error}`, "err");
             }
@@ -390,7 +387,11 @@
             const srvEl = panelEl.querySelector("#iwcred-srv-status");
             if (srvEl && !srvEl.textContent) srvEl.textContent = "正在探测已保存服务器…";
             probeServer(saved).then((p) => {
-                srvSetStatus(p.ok ? `✅ 已保存服务器在线：${p.base}` : `已保存服务器离线：${p.error}`, p.ok ? "ok" : "err");
+                if (p.ok && p.status && p.status.needsAuth) {
+                    srvSetStatus("已保存服务器在线，但设有密码：请先在浏览器登录服务器网页", "err");
+                } else {
+                    srvSetStatus(p.ok ? `✅ 已保存服务器在线：${p.base}` : `已保存服务器离线：${p.error}`, p.ok ? "ok" : "err");
+                }
             });
         }
     }
