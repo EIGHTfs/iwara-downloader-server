@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Iwara Cookie/Token 获取器 + 发送到服务器（按钮版）
 // @namespace    iwara-cred
-// @version      6.0.0
-// @description  点右下角 🎫 复制完整 Cookie（含 HttpOnly cf_clearance）/token；新增「发送到服务器」：把当前视频链接一键推给局域网内的 iwara-downloader-server 添加下载任务（自动在线探测 + 局域网扫描）
+// @version      6.1.0
+// @description  点右下角 🎫 复制完整 Cookie（含 HttpOnly cf_clearance）/token；新增「发送到服务器」：把当前视频链接一键推给 iwara-downloader-server 添加下载任务（手动填地址 + 自动在线探测）
 // @author       fnOS
 // @match        https://www.iwara.tv/*
 // @match        https://iwara.tv/*
@@ -20,19 +20,19 @@
 // ==/UserScript==
 
 /* ============================================================
- * v6.0.0：按钮获取模式 + 发送到服务器
+ * v6.1.0：按钮获取模式 + 发送到服务器
  * - 保留 v5 全部凭证采集/复制能力
- * - 新增「📤 发送到服务器」：把当前视频链接推给 iwara-downloader-server
- *     · 已保存服务器 → 先探测 /api/status 判断是否在线，在线则直接发送
- *     · 未保存 → 局域网扫描（WebRTC 取本机 IP 推导 /24 网段，探测候选端口
- *       /api/status），列出可用服务器供选择，选中后保存并发送
- *     · 服务端 /api/download 兼容完整 iwara.tv URL（自动提取视频 ID）
- * - 服务器地址 / 最近在线状态存 GM 存储（iwcred_server / iwcred_server_online）
+ * - 「📤 发送到服务器」：把当前视频链接推给 iwara-downloader-server
+ *     · 服务器地址手动填写（可保存），点击发送前先探测 /api/status
+ *       判断是否在线，在线则直接 POST /api/download 发送
+ *     · 服务端 /api/download 兼容完整 iwara.tv URL（自带 API 自动提取
+ *       视频 ID 并加入下载任务）
+ * - 服务器地址存 GM 存储（iwcred_server）
  * ============================================================ */
 (function () {
     "use strict";
 
-    const VER = "6.0.0";
+    const VER = "6.1.0";
 
     /* ---------- 工具 ---------- */
     function $(sel) { return document.querySelector(sel); }
@@ -88,11 +88,10 @@
     }
 
     /* ============================================================
-     * 发送到服务器：GM 请求封装 / 在线探测 / 局域网扫描 / 发送
+     * 发送到服务器：GM 请求封装 / 在线探测 / 发送
      * ============================================================ */
 
     const SRV_KEY = "iwcred_server";        // 最近选中的服务器地址
-    const SCAN_PORTS = [8643, 28463, 8080, 3000]; // 候选端口（默认 8643）
 
     /** 跨域 GM_xmlhttpRequest 封装，返回 { ok, status, json, text, error } */
     function gmRequest(method, url, body, timeout) {
@@ -121,68 +120,13 @@
         });
     }
 
-    /** 探测服务器在线：GET /api/status（公开接口，无需登录）；timeoutMs 扫描时用短超时 */
+    /** 探测服务器在线：GET /api/status（公开接口，无需登录） */
     async function probeServer(url, timeoutMs) {
         const base = String(url || "").trim().replace(/\/+$/, "");
         if (!/^https?:\/\//.test(base)) return { ok: false, error: "地址无效" };
         const r = await gmRequest("GET", base + "/api/status", undefined, timeoutMs || 4000);
         if (r.ok && r.json && r.json.ok) return { ok: true, status: r.json, base };
         return { ok: false, error: (r.json && r.json.error) || r.error || ("HTTP " + r.status), base };
-    }
-
-    /** 通过 WebRTC 获取本机局域网 IPv4 列表（探测网段用） */
-    function getLocalIPs() {
-        return new Promise((resolve) => {
-            const ips = new Set();
-            let done = false;
-            const finish = () => { if (!done) { done = true; resolve([...ips]); } };
-            try {
-                const pc = new (window.RTCPeerConnection || window.webkitRTCPeerConnection)({ iceServers: [] });
-                pc.createDataChannel("");
-                pc.createOffer().then((o) => pc.setLocalDescription(o)).catch(finish);
-                pc.onicecandidate = (e) => {
-                    if (!e.candidate) { try { pc.close(); } catch (_) {} finish(); return; }
-                    const m = (e.candidate.candidate || "").match(/(\d+\.\d+\.\d+\.\d+)/);
-                    if (m) ips.add(m[1]);
-                };
-                setTimeout(() => { try { pc.close(); } catch (_) {} finish(); }, 1500);
-            } catch (_) { finish(); }
-        });
-    }
-
-    function isPrivateIP(ip) {
-        const p = (ip || "").split(".").map(Number);
-        if (p.length !== 4) return false;
-        if (p[0] === 10) return true;
-        if (p[0] === 172 && p[1] >= 16 && p[1] <= 31) return true;
-        if (p[0] === 192 && p[1] === 168) return true;
-        return false;
-    }
-
-    /** 局域网扫描：本机 IP 推导 /24 网段 → 候选端口 → 探测 /api/status（短超时 800ms） */
-    async function scanLan(onProgress) {
-        const localIPs = await getLocalIPs();
-        const subnets = [...new Set(localIPs.filter(isPrivateIP).map((ip) => ip.split(".").slice(0, 3).join(".")))];
-        if (subnets.length === 0) subnets.push("10.10.10", "192.168.1", "192.168.0", "10.0.0"); // 兜底常见网段
-        const candidates = [];
-        for (const sub of subnets) {
-            for (let i = 1; i <= 254; i++) {
-                for (const p of SCAN_PORTS) candidates.push(`http://${sub}.${i}:${p}`);
-            }
-        }
-        const found = [];
-        const CONC = 24;
-        let idx = 0;
-        const worker = async () => {
-            while (idx < candidates.length) {
-                const url = candidates[idx++];
-                const r = await probeServer(url, 800);
-                if (r.ok) found.push({ base: url, status: r.status });
-                if (onProgress) onProgress({ scanned: idx, total: candidates.length, found: found.length });
-            }
-        };
-        await Promise.all(Array.from({ length: CONC }, worker));
-        return { found, scanned: candidates.length };
     }
 
     /** 当前视频完整链接（无则返回 ""） */
@@ -264,18 +208,11 @@
 #iwcred-send:disabled{background:#9cc9ac;cursor:wait}
 #iwcred-srv-actions{display:flex;gap:8px;margin-top:8px}
 #iwcred-srv-actions button{flex:1;padding:8px;border-radius:8px;cursor:pointer;font-size:13px}
-#iwcred-scan{background:#f4f1de;color:#7a6a1f;border:1px solid #d9cd8a}
 #iwcred-save{background:#eef4ff;color:#2f6fed;border:1px solid #c9dcff}
 #iwcred-srv-status{margin-top:8px;font-size:13px;min-height:18px;color:#5a6472}
 #iwcred-srv-status.ok{color:#1a9d4b}
 #iwcred-srv-status.err{color:#d0392f}
 #iwcred-srv-status.info{color:#2f6fed}
-#iwcred-srv-list{margin-top:8px}
-.iwcred-srv-item{display:flex;align-items:center;justify-content:space-between;gap:8px;
-  background:#f7f9fc;border:1px solid #e3e8ef;border-radius:8px;padding:8px 10px;margin-bottom:6px}
-.iwcred-srv-item b{font-size:13px;color:#222;word-break:break-all}
-.iwcred-srv-item button{background:#1a9d4b;color:#fff;border:none;border-radius:6px;padding:6px 10px;
-  cursor:pointer;font-size:12px;white-space:nowrap}
 `;
         document.head.appendChild(style);
     }
@@ -308,15 +245,13 @@
 <div id="iwcred-body">
   <label>服务器（📤 把当前视频推给服务器下载）</label>
   <div id="iwcred-server-row">
-    <input id="iwcred-server" placeholder="http://IP:端口（如 http://192.168.1.8:8643）" spellcheck="false">
+    <input id="iwcred-server" placeholder="http://IP:端口（如 http://10.10.10.4:28463）" spellcheck="false">
     <button id="iwcred-send">📤 发送</button>
   </div>
   <div id="iwcred-srv-actions">
-    <button id="iwcred-scan">🔍 扫描局域网</button>
     <button id="iwcred-save">💾 记住地址</button>
   </div>
   <div id="iwcred-srv-status"></div>
-  <div id="iwcred-srv-list"></div>
   <label>完整 Cookie（含 cf_clearance，GM_cookie 读取）</label>
   <textarea id="iwcred-cookie" readonly spellcheck="false"></textarea>
   <label>refresh_token</label>
@@ -331,6 +266,7 @@
   <div id="iwcred-info"></div>
 </div>`;
             document.body.appendChild(panelEl);
+            panelEl.style.display = "none"; // 默认隐藏，仅点击 🎫 悬浮按钮时弹出
             panelEl.querySelector("#iwcred-close").addEventListener("click", () => { panelEl.style.display = "none"; });
             panelEl.querySelector("#iwcred-copy-all").addEventListener("click", async () => {
                 const p = await buildPayload();
@@ -342,7 +278,6 @@
             });
             // ---- 发送到服务器 ----
             panelEl.querySelector("#iwcred-send").addEventListener("click", srvSendFlow);
-            panelEl.querySelector("#iwcred-scan").addEventListener("click", srvScanFlow);
             panelEl.querySelector("#iwcred-save").addEventListener("click", srvSaveFlow);
             panelEl.querySelector("#iwcred-server").addEventListener("keydown", (e) => {
                 if (e.key === "Enter") srvSendFlow();
@@ -384,33 +319,6 @@
         if (cls !== "info") setTimeout(() => { el.textContent = ""; el.className = ""; }, 6000);
     }
     function srvInput() { return panelEl ? panelEl.querySelector("#iwcred-server") : null; }
-    function srvListEl() { return panelEl ? panelEl.querySelector("#iwcred-srv-list") : null; }
-    function srvRenderFound(list) {
-        const box = srvListEl();
-        if (!box) return;
-        box.innerHTML = "";
-        if (!list.length) {
-            box.innerHTML = '<div class="iwcred-srv-item"><b>未发现服务器</b></div>';
-            return;
-        }
-        list.forEach((f) => {
-            const row = document.createElement("div");
-            row.className = "iwcred-srv-item";
-            const b = document.createElement("b");
-            b.textContent = f.base;
-            const btn = document.createElement("button");
-            btn.textContent = "使用并发送";
-            btn.addEventListener("click", () => {
-                const inp = srvInput();
-                if (inp) inp.value = f.base;
-                GM_setValue(SRV_KEY, f.base);
-                srvSendFlow();
-            });
-            row.appendChild(b);
-            row.appendChild(btn);
-            box.appendChild(row);
-        });
-    }
 
     /* ---------- 发送到服务器：核心流程 ---------- */
     async function srvSendFlow() {
@@ -424,7 +332,7 @@
         let base = (inp && inp.value.trim()) || GM_getValue(SRV_KEY, "") || "";
         base = String(base).trim().replace(/\/+$/, "");
         if (!base) {
-            srvSetStatus("没有服务器地址：请「扫描局域网」或手动输入", "err");
+            srvSetStatus("没有服务器地址：请手动输入（如 http://10.10.10.4:28463）", "err");
             return;
         }
         const sendBtn = panelEl.querySelector("#iwcred-send");
@@ -433,7 +341,7 @@
             srvSetStatus(`正在探测 ${base} 是否在线…`, "info");
             const probe = await probeServer(base);
             if (!probe.ok) {
-                srvSetStatus(`服务器离线：${probe.error}。可点「扫描局域网」查找`, "err");
+                srvSetStatus(`服务器离线：${probe.error}`, "err");
                 if (inp) inp.value = base;
                 return;
             }
@@ -448,26 +356,6 @@
             }
         } finally {
             if (sendBtn) sendBtn.disabled = false;
-        }
-    }
-
-    async function srvScanFlow() {
-        if (!ensureUi()) return;
-        const scanBtn = panelEl.querySelector("#iwcred-scan");
-        if (scanBtn) scanBtn.disabled = true;
-        try {
-            srvSetStatus("正在扫描局域网（本机 IP 推导网段 + 候选端口）…", "info");
-            const { found, scanned } = await scanLan((p) => {
-                srvSetStatus(`扫描中… ${p.scanned}/${p.total} ｜ 已发现 ${p.found} 台`, "info");
-            });
-            if (found.length) {
-                srvSetStatus(`扫描完成：${scanned} 个候选，发现 ${found.length} 台服务器`, "ok");
-            } else {
-                srvSetStatus("扫描完成，未发现可用服务器（可手动输入地址）", "err");
-            }
-            srvRenderFound(found);
-        } finally {
-            if (scanBtn) scanBtn.disabled = false;
         }
     }
 
