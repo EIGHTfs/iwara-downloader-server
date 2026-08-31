@@ -400,8 +400,24 @@ const server = http.createServer(async (req, res) => {
     }
     if (method === "POST" && pathname === "/api/download") {
       const body = await readBody(req);
-      const items = body.items || [];
-      if (!Array.isArray(items) || items.length === 0) return sendJson(res, 400, { ok: false, error: "无下载项" });
+      const rawItems = body.items || [];
+      if (!Array.isArray(rawItems) || rawItems.length === 0) return sendJson(res, 400, { ok: false, error: "无下载项" });
+      // 兼容油猴脚本「发送到服务器」：支持字符串（完整 iwara.tv 链接或纯 ID）与对象两种形态
+      const items = rawItems
+        .map((it) => {
+          if (typeof it === "string") it = { url: it };
+          if (!it || typeof it !== "object") return null;
+          let id = String(it.id || "").trim();
+          const url = String(it.url || "").trim();
+          if (!id && url) {
+            const m = url.match(/\/(?:video|v)\/([\w-]+)/i);
+            id = m ? m[1] : url.replace(/^https?:\/\/[^/]+\//, "").split("?")[0].trim();
+          }
+          if (!/^[\w-]+$/.test(id)) return null;
+          return Object.assign({}, it, { id, url });
+        })
+        .filter(Boolean);
+      if (items.length === 0) return sendJson(res, 400, { ok: false, error: "无法识别下载项" });
       try {
         const r = await downloader.startDownloadTask(items);
         return sendJson(res, 200, r);
