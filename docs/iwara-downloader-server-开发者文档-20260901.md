@@ -1,7 +1,7 @@
 # iwara-downloader-server 开发者文档
 
 > 版本：**1.0.5**（2026-09-01）
-> 运行环境：Node.js v18+（零依赖 HTTP 服务）。默认端口 8643。群晖 DSM 实测 Node v22.19.0 / v20.19.5。
+> 运行环境：Node.js **24**（零依赖 HTTP 服务）。默认端口 8643。群晖必须用项目 `tool/node`（官方 linux-x64 v24.19.0）；套件 Node 22 打 `api.iwara.tv` 会被 CF 挑战。
 > 对照：本文件结构对齐 `gbmd-开发者文档-20260827.md`（项目结构 / API / 下载流程 / 配置 / 坑）
 
 ---
@@ -18,6 +18,7 @@
 8. [下载/任务 API](#8-下载任务-api)
 9. [用户数据备份 API](#9-用户数据备份-api)
 10. [下载流程详解（重点）](#10-下载流程详解重点)
+    - 含 [10.7 群晖 Node 版本 vs Cloudflare（2026-09-01 实测）](#107-群晖-node-版本-vs-cloudflare2026-09-01-实测)
 11. [前端（gbmd 纯前端模板）](#11-前端gbmd-纯前端模板)
 12. [配置文件与数据文件](#12-配置文件与数据文件)
 13. [注意事项/坑](#13-注意事项坑)
@@ -33,7 +34,8 @@ iwara-downloader-server/
 ├── scripts/git-push.sh                 # 读项目根 .git-push-token 推 origin + tags
 ├── scripts/iwara-cred-fetch.user.js    # 油猴脚本（凭证 + 一键发送 /api/receive）
 ├── userdata-manifest.json              # 用户数据清单（备份/恢复按此收集）
-├── TROUBLESHOOTING.md                  # 踩坑：UA / IP 直连 / DNS / 链接过期 / aria2
+├── TROUBLESHOOTING.md                  # 踩坑：UA / IP 直连 / DNS / 链接过期 / aria2 / Node 24
+├── tool/node/                          # 官方 Node 24 linux-x64（gitignore，群晖部署解压到这里）
 ├── docs/                               # 开发者文档（本文件）
 └── server/
     ├── app.js                          # HTTP 入口 + 全部 API 路由
@@ -245,12 +247,14 @@ GET /api/browse?path=/volume3/WORKGROUP
   "cred": { "hasCookie": true, "cookieChars": 127, "cookieItems": 2, "hasCfClearance": false,
             "hasToken": true, "hasAccessToken": true } }
 
-// CF 挑战
+// CF 挑战（几乎总是 Node 运行时指纹，不是缺 cf_clearance）
 { "ok": false, "loggedIn": false, "cfChallenge": true,
-  "error": "Cloudflare 挑战未通过：Cookie 缺少 cf_clearance 或已过期" }
+  "error": "Cloudflare 挑战未通过（Node TLS 指纹，与 Cookie 无关）" }
 ```
 
-内部会先 `ensureAccessToken`（用 iwaraToken 刷 access_token 并持久化）。401 时自动再刷一次重试。
+内部会先 `ensureAccessToken`（用 iwaraToken 刷 access_token 并持久化）。401 时自动再刷一次重试。导入 zip 走 `checkLogin({ force: true })`。
+
+**不要用「Cookie 缺 cf_clearance」解释 403。** IP 直连 + 精简 UA + **Node 24** 时，残 Cookie（只有 `_ga`、没有 clearance）也能 `loggedIn: true`。见 §10.7。
 
 ### GET /api/following
 
@@ -626,7 +630,7 @@ API、direct 下载、aria2 `header` 都必须带这个。aria2 默认 `aria2/1.
 ### 10.5 文件名
 
 模板变量：`{TITLE}` `{ALIAS}` `{ID}` `{AUTHOR}` `{QUALITY}` `{UPLOADTIME}` `{NOWTIME}`。
-默认：`Iwara_-_{TITLE}_[{ID}]_[{QUALITY}].mp4`。
+默认：`Iwara_-_{TITLE}_[{ID}]_[{QUALITY}]`（不要写 `.mp4`，落盘自动补）。
 非法字符替换为 `_`。`useAuthorSubdir` 默认 **false**。
 
 ### 10.6 aria2 后端
@@ -642,6 +646,39 @@ API、direct 下载、aria2 `header` 都必须带这个。aria2 默认 `aria2/1.
 
 实测（权限放开后）：`KzQf3RIaBEf5vL` → 107,512,609 bytes complete，路径
 `/volume3/WORKGROUP/Iwara_-_奥黛塔 经纪人的性爱计划 Day1_[KzQf3RIaBEf5vL]_[Source].mp4`
+
+### 10.7 群晖 Node 版本 vs Cloudflare（2026-09-01 实测）
+
+现象：Aria2 在 SA6400 上能把视频下完，网页顶栏却报「Cloudflare 挑战未通过：Cookie 缺少 cf_clearance」。导入用户数据 zip 也「成功」，Cookie 原样写回，登录还是失败。
+
+**结论：不是 Cookie，也不是 IP。是跑 API 的那个 Node 的 TLS 指纹。**
+
+对照实验（同一台 SA6400 `10.10.10.64`，同一出口，同一精简 UA，**都不带 cf_clearance**）：
+
+| 客户端 | 目标 | DNS / 连接 | 结果 |
+|---|---|---|---|
+| 群晖 Aria2 套件 | CDN 文件（`firefly.iwara.tv` 等） | 系统 DNS → 泛解析 `104.26.12.12` | ✅ 视频 complete |
+| 群晖 Node.js_v22 套件（OpenSSL 1.1.1u） | `GET https://api.iwara.tv/user` | 代码写死 IP **或** `dns.lookup` 得到 `104.26.12.12` | ❌ 403 `cf-mitigated: challenge` / `Just a moment` |
+| 群晖 curl 7.86（OpenSSL 3.0.9） | 同上 | `--resolve api.iwara.tv:443:104.26.12.12` 或走 hostname | ❌ 同上 |
+| 官方 Node **v24.19.0** linux-x64（项目 `tool/node`） | 同上 | 同上 IP + SNI `api.iwara.tv` | ✅ 200 JSON；有 refresh_token 则 `loggedIn: true` |
+| fnOS `/usr/bin/node` v24.19.0 | 同上 | 同上 | ✅ 200 / 401 JSON |
+
+关键观测：
+
+1. **`api.iwara.tv` 已被群晖 DNS Server 泛解析。**  
+   `dns.lookup('api.iwara.tv')` → `{ address: '104.26.12.12', family: 4 }`。  
+   代码里 `host: "104.26.12.12"` + `servername: "api.iwara.tv"` 和走系统 DNS 是同一条路，不是两套绕过。
+2. **nslookup 走 10.10.10.1 会污染**（`75.126.124.162` / `2001::1f0d:5322`）。Node 走 `127.0.0.1`（DNS Server 套件）才是 `104.26.12.12`。Aria2 必须用套件 DNS，不能用上游 10.10.10.1。
+3. **Aria2 能下 ≠ API 能登录。** Aria2 打的是 CDN 文件站（`*.iwara.tv` 下载子域）；登录 / 搜索 / `getVideoInfo` 打的是 `api.iwara.tv`。CF 对「浏览器不像」的 TLS 指纹只拦 API，文件站放行。
+4. **不需要 `cf_clearance`。** 当时 `config.json` 的 Cookie 只有 `_ga` + 一条 `deleted`（127 字符、3 项，`hasCfClearance: false`）。换成 Node 24 后 `GET /api/account-check`：
+   ```
+   loggedIn: true, username: fluquormyosotis, remainingDays: 29.4, cfChallenge: 无
+   ```
+   `POST /api/data/import` 写回同一份 config 再 `checkLogin({force:true})` 同样成功。
+5. **误判路径：** 代码曾把所有 `HTTP 403 Just a moment` 标成「Cookie 缺少 cf_clearance」，顶栏把 JWT 剩余天数（refresh_token 还剩 29 天）叠在这条错误下面，看起来像「导入丢了 Cookie」。其实 zip 里 Cookie 原样在，Token 也在。
+6. **部署：** `start.sh` 第一优先 `tool/node/bin/node`。把官方 `node-v24.19.0-linux-x64` 解压到 `tool/node/`（gitignore，不入库）。不要用群晖 Node.js_v22 / v20 套件跑本服务。
+
+硬约束补一条：**SA6400 上禁止用套件 Node 跑 iwara-api；CF 403 先看 `node -v`，再看 Cookie。**
 
 ---
 
@@ -724,6 +761,8 @@ bash scripts/git-push.sh
 12. **跳过已下载只认文件或 Aria2 记录**，索引不能当跳过依据（Aria2 记录可被用户清掉）。
 13. 文件名模板不要写 `.mp4`，`applyFileNameTemplate` 落盘时自动补。
 14. 设置页下载根目录用 `/api/browse` 选的是**跑服务那台机器**上的路径；Aria2 后端必须让服务和 Aria2 看到同一块盘。
+15. **SA6400 必须用 Node 24**（`tool/node`）。套件 Node 22 / curl 打 `api.iwara.tv` = CF 挑战，与 Cookie 无关。Aria2 能下视频不能当 API 已通。见 §10.7。
+16. 导入 zip 必须立刻 `checkLogin({force:true})` 并看返回的 `login`，不能只看 `restored` 文件列表。
 
 **改动后必测**
 
@@ -733,6 +772,8 @@ bash scripts/git-push.sh
 4. `POST /api/download` 用网页 API，不手搓过期链接
 5. aria2 场景：tellStatus 有 totalLength 且能 complete
 6. 新建 `following_cache.json` 后重启，页面显示关注数量正确
+7. SA6400：`./start.sh` 打印的 Node 必须是 v24.x；`GET /api/account-check` 在无 cf_clearance 时也能 `loggedIn:true`
+8. `POST /api/data/import` 返回体含 `login.loggedIn`，不能只看 restored
 
 ---
 
@@ -752,7 +793,7 @@ bash scripts/git-push.sh
 | 视频索引 | 自己生成精简 `{id:{name,username,title,fileId,duration,tags,createdAt}}`；兼容读取别人完整 dump；sidecar 经 HMAC 短链推给 Aria2 |
 | 账号检测 | 只保留 `GET /api/account-check`（旧 `/api/iwara-check` 已删） |
 | 用户数据 zip | 清单增加 `iwara-index.json`、`sessions.json`；**导入后立刻 `checkLogin({force:true})`，返回 `login`** |
-| Node 运行时 | 项目 `tool/node/` 放官方 Node 24（gitignore）。群晖套件 Node 22 打 `api.iwara.tv` 会被 CF 挑战；Node 24 + 泛解析 104.26.12.12 不需要 cf_clearance |
+| Node 运行时 | 项目 `tool/node/` 放官方 Node 24（gitignore）。群晖套件 Node 22 打 `api.iwara.tv` 会被 CF 挑战；Node 24 + 泛解析 104.26.12.12 **不需要 cf_clearance**。完整对照见 §10.7 |
 
 ### 1.0.2
 
