@@ -121,11 +121,11 @@
         });
     }
 
-    /** 探测服务器在线：GET /api/status（公开接口，无需登录） */
-    async function probeServer(url) {
+    /** 探测服务器在线：GET /api/status（公开接口，无需登录）；timeoutMs 扫描时用短超时 */
+    async function probeServer(url, timeoutMs) {
         const base = String(url || "").trim().replace(/\/+$/, "");
         if (!/^https?:\/\//.test(base)) return { ok: false, error: "地址无效" };
-        const r = await gmRequest("GET", base + "/api/status", undefined, 4000);
+        const r = await gmRequest("GET", base + "/api/status", undefined, timeoutMs || 4000);
         if (r.ok && r.json && r.json.ok) return { ok: true, status: r.json, base };
         return { ok: false, error: (r.json && r.json.error) || r.error || ("HTTP " + r.status), base };
     }
@@ -159,7 +159,7 @@
         return false;
     }
 
-    /** 局域网扫描：本机 IP 推导 /24 网段 → 候选端口 → 探测 /api/status */
+    /** 局域网扫描：本机 IP 推导 /24 网段 → 候选端口 → 探测 /api/status（短超时 800ms） */
     async function scanLan(onProgress) {
         const localIPs = await getLocalIPs();
         const subnets = [...new Set(localIPs.filter(isPrivateIP).map((ip) => ip.split(".").slice(0, 3).join(".")))];
@@ -171,12 +171,12 @@
             }
         }
         const found = [];
-        const CONC = 16;
+        const CONC = 24;
         let idx = 0;
         const worker = async () => {
             while (idx < candidates.length) {
                 const url = candidates[idx++];
-                const r = await probeServer(url);
+                const r = await probeServer(url, 800);
                 if (r.ok) found.push({ base: url, status: r.status });
                 if (onProgress) onProgress({ scanned: idx, total: candidates.length, found: found.length });
             }

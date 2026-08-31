@@ -162,6 +162,7 @@ node server/app.js --set-password "你的密码"
 4. 发送成功后服务器端解析链接 → 提取视频 ID → 加入下载任务并后台下载（直连或 Aria2）。
 
 > `/api/download` 已兼容字符串/对象两种输入：完整 iwara.tv 链接、`video/ID`、纯 ID 均可（自动提取视频 ID）。
+> 若服务器设置了访问密码：请先在浏览器登录一次服务器网页（会话 cookie 由浏览器自动携带，`GM_xmlhttpRequest` 会随请求带上），否则发送会返回 401。
 
 ---
 
