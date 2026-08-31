@@ -19,7 +19,6 @@ const os = require("os");
 const cfg = require("../config");
 const api = require("./iwara-api");
 const videoIndex = require("./video-index");
-const IWARA_CF_IP = api.IWARA_CF_IP || "104.26.12.12";
 
 const DATA_DIR = process.env.GBMD_DATA_DIR || __dirname;
 const TASK_FILE = path.join(DATA_DIR, "..", "download_task.json");
@@ -225,7 +224,7 @@ function downloadToFile(item, onProgress) {
 
       const req = https.request(
         {
-          host: IWARA_CF_IP,
+          host: api.getCfIp(),
           port: u0.port || 443,
           path: u0.pathname + u0.search,
           method: "GET",
@@ -486,8 +485,9 @@ async function aria2Add(item) {
     headers.push(`Cookie: ${c.iwaraCookie}`);
   }
   options.header = headers;
-  // 群晖 DNS Server 套件：*.iwara.tv → 104.26.12.12（系统 127.0.0.1:53 可能未监听）
-  options["dns-server"] = "10.10.10.64";
+  // aria2 解析 *.iwara.tv 用的 DNS：读配置 aria2Dns（群晖 DNS Server 套件），留空则不传
+  const dns = String(c.aria2Dns || "").trim();
+  if (dns) options["dns-server"] = dns;
   return aria2Rpc("aria2.addUri", [[item.url], options]);
 }
 

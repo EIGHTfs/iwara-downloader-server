@@ -279,7 +279,7 @@ const server = http.createServer(async (req, res) => {
           if (parsed.accessToken) body.iwaraAccessToken = parsed.accessToken;
         }
       }
-      const allowed = ["iwaraCookie", "iwaraToken", "iwaraAccessToken", "downloadBackend", "concurrency", "aria2Path", "aria2Token", "downloadPath", "fileNameTemplate", "useAuthorSubdir", "showLikedInSearch", "autoLike", "autoFollow", "sessionHours", "port", "checkDownloadLink"];
+      const allowed = ["iwaraCookie", "iwaraToken", "iwaraAccessToken", "downloadBackend", "concurrency", "aria2Path", "aria2Token", "downloadPath", "fileNameTemplate", "useAuthorSubdir", "showLikedInSearch", "autoLike", "autoFollow", "sessionHours", "port", "checkDownloadLink", "iwaraCfgIp", "aria2Dns"];
       for (const k of allowed) {
         if (body[k] === undefined) continue;
         if ((k === "iwaraCookie" || k === "iwaraToken" || k === "iwaraAccessToken" || k === "aria2Token") && String(body[k]).trim() === "") continue;

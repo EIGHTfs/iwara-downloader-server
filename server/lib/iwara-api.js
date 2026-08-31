@@ -31,10 +31,13 @@ const X_VERSION_SECRET = "mSvL05GfEmeEmsEYfGCnVpEjYgTJraJN";
 // CF 的 bot 检测对常见抓包 UA 反而更警惕。
 const DEFAULT_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0.0.0 Safari/537.36";
-// Cloudflare 边缘 IP（由 vhosts.js /hosts 托管块管理）
+// Cloudflare 边缘 IP：不写死，从 config.json 的 iwaraCfgIp 读取（默认 104.26.12.12）。
 // Virtual Hosts APK 原理：本地 DNS 拦截 → 命中规则返回固定 IP → 应用层直连该 IP
 // 这里在应用层做同样的事：跳过系统 DNS（防污染），用 IP 直连 + SNI/Host header
-const IWARA_CF_IP = "104.26.12.12";
+function getCfIp() {
+  const v = String(cfg.readConfig().iwaraCfgIp || "").trim();
+  return v || "104.26.12.12";
+}
 const HTTPS_AGENT = new https.Agent({ keepAlive: true, keepAliveMsecs: 60000, maxSockets: 32 });
 
 // ---------- X-Version 签名（与油猴 xVersion.ts 完全一致） ----------
@@ -111,7 +114,7 @@ function httpsJson(url, opts = {}) {
 
       const req = https.request(
         {
-          host: IWARA_CF_IP,
+          host: getCfIp(),
           port: u.port || 443,
           path: u.pathname + u.search,
           method,
@@ -498,7 +501,7 @@ function fetchThumbnail(fileId, n) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
     const req = https.request({
-      host: IWARA_CF_IP,
+      host: getCfIp(),
       port: 443,
       path: u.pathname,
       method: "GET",
@@ -700,4 +703,4 @@ async function getComments(id) {
   return out.join("\n");
 }
 
-module.exports = { getXVersion, checkLogin, getVideoInfo, listVideos, getUserProfile, getComments, ensureAccessToken, listFollowing, listFollowingPage, likeVideo, followUser, autoLikeFollow, thumbnailUrl, fetchThumbnail, API_HOST, DEFAULT_UA, IWARA_CF_IP };
+module.exports = { getXVersion, checkLogin, getVideoInfo, listVideos, getUserProfile, getComments, ensureAccessToken, listFollowing, listFollowingPage, likeVideo, followUser, autoLikeFollow, thumbnailUrl, fetchThumbnail, API_HOST, DEFAULT_UA, getCfIp };

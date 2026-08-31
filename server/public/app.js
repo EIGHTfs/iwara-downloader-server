@@ -703,6 +703,8 @@ function fillSettings(s) {
   if (!$("#set-aria2Token").value) {
     $("#set-aria2Token").placeholder = settings.hasAria2Token ? "已保存则留空不改" : "RPC 密钥";
   }
+  $("#set-iwaraCfgIp").value = settings.iwaraCfgIp || "104.26.12.12";
+  $("#set-aria2Dns").value = settings.aria2Dns || "";
   // Cookie 框只在空着时回填一次：保存后不要把旧值盖回刚贴进去的新凭证
   const cookieEl = $("#set-iwaraCookie");
   if (cookieEl && !cookieEl.value.trim()) {
@@ -767,7 +769,9 @@ function bindSettings() {
         downloadBackend: $("#set-downloadBackend").value,
         concurrency: parseInt($("#set-concurrency").value, 10) || 3,
         aria2Path: $("#set-aria2Path").value.trim(),
-        aria2Token: $("#set-aria2Token").value
+        aria2Token: $("#set-aria2Token").value,
+        iwaraCfgIp: $("#set-iwaraCfgIp").value.trim(),
+        aria2Dns: $("#set-aria2Dns").value.trim()
       };
       const credText = $("#set-iwaraCookie").value;
       if (credText && credText.trim()) body.iwaraCookie = credText;

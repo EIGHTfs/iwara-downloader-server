@@ -20,6 +20,10 @@ const DEFAULT_CONFIG = {
   iwaraCookie: "",
   // access_token（由 refresh_token POST /user/token 刷新，关注列表等需登录接口用）
   iwaraAccessToken: "",
+  // Cloudflare 边缘 IP（api.iwara.tv 泛解析后的直连目标；从配置读取，不写死在代码里）
+  iwaraCfgIp: "104.26.12.12",
+  // aria2 解析 *.iwara.tv 用的 DNS（群晖 DNS Server 套件；留空 = 不传 dns-server，走 aria2 系统 DNS）
+  aria2Dns: "10.10.10.64",
   // 下载后端：direct（Node 直连） | aria2
   downloadBackend: "direct",
   // 直连下载并发数

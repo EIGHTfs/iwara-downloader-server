@@ -2,6 +2,8 @@
   "port": 8643,
   "iwaraToken": "",
   "iwaraCookie": "",
+  "iwaraCfgIp": "104.26.12.12",
+  "aria2Dns": "10.10.10.64",
   "downloadBackend": "direct",
   "concurrency": 3,
   "aria2Path": "http://127.0.0.1:6800/jsonrpc",

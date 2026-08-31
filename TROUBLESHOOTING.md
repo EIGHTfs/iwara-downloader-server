@@ -32,14 +32,14 @@ Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0.0.0 Safari/537.36
 ## 2. Cloudflare 挑战绕过核心：IP 直连 + SNI + Host
 
 iwara.tv 全套在 Cloudflare 后面，而 DNS 被污染，所以：
-1. **不通过系统 DNS 解析**，直接连 Cloudflare 边缘 IP `104.26.12.12`
+1. **不通过系统 DNS 解析**，直接连 Cloudflare 边缘 IP（`config.json` 的 `iwaraCfgIp`，默认 `104.26.12.12`）
 2. TLS 用 `servername: <真实域名>` 保留 SNI
 3. HTTP 头带 `Host: <真实域名>` 让虚拟主机识别
 4. UA 用精简版（见上）
 
 ```js
 https.request({
-  host: "104.26.12.12",      // IP 直连，绕开 DNS
+  host: api.getCfIp(),       // 读配置 iwaraCfgIp，代码不写死
   servername: "api.iwara.tv", // TLS SNI 保持域名
   headers: { Host: "api.iwara.tv", "User-Agent": DEFAULT_UA, ... }
 })

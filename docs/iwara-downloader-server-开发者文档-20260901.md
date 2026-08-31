@@ -591,13 +591,13 @@ items[]
 
 ```js
 https.request({
-  host: "104.26.12.12",
+  host: api.getCfIp(),              // 读 config.json 的 iwaraCfgIp（默认 104.26.12.12），代码不写死
   servername: "<真实域名>",          // TLS SNI
   headers: { Host: "<真实域名>", "User-Agent": DEFAULT_UA }
 })
 ```
 
-`IWARA_CF_IP = "104.26.12.12"`。
+CF 边缘 IP 从 `server/config.json` 的 `iwaraCfgIp` 读取（默认 `104.26.12.12`），aria2 用的 DNS 从 `aria2Dns` 读取（默认 `10.10.10.64`，留空则不传 `dns-server`）。设置页「下载后端」卡片可改。
 
 ### 10.2 User-Agent
 
@@ -639,7 +639,7 @@ API、direct 下载、aria2 `header` 都必须带这个。aria2 默认 `aria2/1.
 - token：`params: ["token:"+aria2Token, [uris], options]`，不要放 query string
 - `options.dir` = **aria2 机器上的路径**（群晖例 `/volume3/WORKGROUP/`）
 - `options.header` = `User-Agent: <精简 UA>`；仅当 Cookie 含 `cf_clearance` 且不含 `deleted` 才附带 Cookie
-- `options["dns-server"]` = `10.10.10.64`（群晖 DNS Server：`iwara.tv * A 104.26.12.12`）
+- `options["dns-server"]` = 配置 `aria2Dns`（默认 `10.10.10.64`，群晖 DNS Server：`iwara.tv * A <iwaraCfgIp>`）
 - aria2 自己做 DNS：NAS 系统 DNS 必须能把 `*.iwara.tv` 解到 `104.26.12.12`；`127.0.0.1#53` 未监听时用套件地址
 - 提交成功后本服务标 `submitted`；真实进度在 Aria2 WebUI
 - 写目录权限不够时表现为拿到 Content-Length 后速度 0 / abort——先给目标目录写权限
@@ -748,12 +748,12 @@ bash scripts/git-push.sh
 细节以 `TROUBLESHOOTING.md` 为准。开发时硬约束：
 
 1. **UA 只许精简版**，完整 Chrome UA = 403。
-2. **IP 直连 104.26.12.12 + SNI + Host**，不要修系统 DNS、不要 Node 24 lookup。
+2. **CF 边缘 IP 从配置读（`iwaraCfgIp`），代码不写死；IP 直连 + SNI + Host**，不要修系统 DNS、不要 Node 24 lookup。
 3. **每次下载必须 fresh `getVideoInfo`**，禁止复用 URL。
 4. 搜索关键词走 `/search?query=`，禁止 `/videos?search=`。
 5. `useAuthorSubdir` 默认否，代码必须读配置，不要写死 true。
 6. 改代码后同步运行副本并在 **SA6400** 上 **重启**，看 PID 是否变化。不要在 fnOS 再起一份。
-7. aria2：UA header、DSM 证书、`dir` 权限、NAS DNS → 104.26.12.12。
+7. aria2：UA header、DSM 证书、`dir` 权限、`aria2Dns` → `<iwaraCfgIp>`。
 8. 用户数据（config / cookie / token / 任务 / 搜索缓存 / `.git-push-token` / `iwara-index.json` / `sessions.json`）全部 gitignore。
 9. 前端交给模板复用：先改 `docs/ui-template` 对应结构，不要另起一套 DOM。
 10. **Cookie 保存填组合文本**：多行 `Cookie=...\nToken=...\nAccessToken=...` 会被拆开存；留空不覆盖。
