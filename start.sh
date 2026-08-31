@@ -11,16 +11,25 @@ SERVER_DIR="$ROOT/server"
 PID_FILE="$SERVER_DIR/app.pid"
 LOG_FILE="$SERVER_DIR/server.log"
 
-# 群晖 DSM 默认 PATH 没有 node；把套件路径补上
-export PATH="/usr/local/bin:/var/packages/Node.js_v22/target/usr/local/bin:/var/packages/Node.js_v20/target/usr/local/bin:$PATH"
-NODE_BIN="$(command -v node 2>/dev/null || true)"
-for c in /usr/local/bin/node /var/packages/Node.js_v22/target/usr/local/bin/node /var/packages/Node.js_v20/target/usr/local/bin/node; do
-  if [ -z "$NODE_BIN" ] && [ -x "$c" ]; then NODE_BIN="$c"; fi
+# Node 选择：项目自带 Node 24（CF 对 Node 22 OpenSSL 1.1 指纹会挑战；
+# 实测 Node 24 + IP 直连 + 精简 UA 不需要 cf_clearance）> PATH > 群晖套件
+export PATH="$ROOT/tool/node/bin:/usr/local/bin:/var/packages/Node.js_v24/target/usr/local/bin:/var/packages/Node.js_v22/target/usr/local/bin:/var/packages/Node.js_v20/target/usr/local/bin:$PATH"
+NODE_BIN=""
+for c in \
+  "$ROOT/tool/node/bin/node" \
+  /usr/local/bin/node \
+  /var/packages/Node.js_v24/target/usr/local/bin/node \
+  /var/packages/Node.js_v22/target/usr/local/bin/node \
+  /var/packages/Node.js_v20/target/usr/local/bin/node \
+  "$(command -v node 2>/dev/null || true)"
+do
+  if [ -n "$c" ] && [ -x "$c" ]; then NODE_BIN="$c"; break; fi
 done
 if [ -z "$NODE_BIN" ]; then
-  echo "❌ 找不到 node（请安装 Node.js 套件）"
+  echo "❌ 找不到 node。请把官方 linux-x64 解压到 tool/node/，或安装 Node.js 套件"
   exit 1
 fi
+echo "使用 Node: $NODE_BIN ($("$NODE_BIN" -v 2>/dev/null))"
 
 # ---- 端口：命令行参数 > config.json > 默认 8643 ----
 PORT="${1:-}"

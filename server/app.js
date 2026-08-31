@@ -445,7 +445,14 @@ const server = http.createServer(async (req, res) => {
       fs.writeFileSync(zipPath, zipBuf);
       try {
         const r = await dataBackup.importZip(zipPath);
-        return sendJson(res, 200, r);
+        // 导入会覆盖 config.json；必须立刻用新 Cookie/Token 打一次 Iwara 登录，不能只写盘。
+        let login = null;
+        try {
+          login = await api.checkLogin({ force: true });
+        } catch (e) {
+          login = { ok: false, loggedIn: false, error: String(e && e.message || e) };
+        }
+        return sendJson(res, 200, Object.assign({}, r, { login }));
       } catch (e) {
         return sendJson(res, 400, { ok: false, error: "导入失败: " + (e && e.message || e) });
       } finally {

@@ -47,6 +47,17 @@ https.request({
 
 **这就是 Virtual Hosts APK 原理的应用层实现。任何下载请求都必须走这条路径，不要走系统 DNS。**
 
+群晖 DNS Server 把 `*.iwara.tv` 泛解析到 `104.26.12.12` 之后，Node `dns.lookup('api.iwara.tv')` 就是这个 IP，和代码里写死 IP 是同一件事。
+
+**Node 版本比 Cookie 更关键：**
+
+| 运行时 | `GET https://api.iwara.tv/user`（精简 UA、无 cf_clearance） |
+|---|---|
+| Node 24（官方 linux-x64 / fnOS `/usr/bin/node`） | ✅ 200 / 401 JSON |
+| 群晖 Node.js_v22 套件、curl 7.86 | ❌ 403 `cf-mitigated: challenge` |
+
+Aria2 能下视频 ≠ API 能登录：Aria2 打的是 CDN 文件站，登录走 `api.iwara.tv`。SA6400 上必须用项目自带 `tool/node`（Node 24）启动。
+
 ---
 
 ## 3. DNS 污染

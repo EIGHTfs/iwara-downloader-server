@@ -896,7 +896,13 @@ function bindSettings() {
       if (!b64) throw new Error("读取文件失败");
       const r = await api("/api/data/import", "POST", { data: b64 });
       if (!r.ok) throw new Error(r.error || "导入失败");
-      setStatus(st, "导入完成：恢复 " + r.restored.length + " 个文件，跳过 " + r.skipped.length + " 个" + (r.note ? "。" + r.note : ""), "ok");
+      const login = r.login || {};
+      if (login.loggedIn) {
+        setStatus(st, "导入完成：恢复 " + r.restored.length + " 个文件。Iwara 已登录 " + (login.username || login.user || "") + (login.remainingDays != null ? "，剩 " + Math.floor(login.remainingDays) + " 天" : ""), "ok");
+      } else {
+        setStatus(st, "导入完成：恢复 " + r.restored.length + " 个文件。Iwara 登录失败：" + (login.error || "未知") + "。" + (r.note || ""), login.error ? "err" : "ok");
+      }
+      refreshIwaraBadge();
     } catch (e) {
       setStatus(st, "导入失败: " + (e && e.message || e), "err");
     } finally {
@@ -969,14 +975,17 @@ function updateIwaraUserBadge(r) {
   }
   const name = r.username || r.user || "";
   const remain = formatIwaraRemain(r);
-  if (r.warnLevel === "expired" || !r.loggedIn) {
-    setStack(r.warnLevel === "expired" ? "❌ 已过期" : ("❌ " + (r.error || "未登录")), remain, "iwara-user-err");
+  if (r.warnLevel === "expired") {
+    setStack("❌ 已过期", remain, "iwara-user-err");
+  } else if (!r.loggedIn) {
+    const short = r.cfChallenge ? "Cookie 需更新" : (r.error || "未登录");
+    setStack("❌ " + short, "", "iwara-user-err");
   } else if (r.warnLevel === "warn") {
     setStack("⚠️ " + (name || "已登录"), remain, "iwara-user-warn");
   } else {
     setStack("👤 " + (name || "已登录"), remain, "iwara-user-ok");
   }
-  el.title = formatIwaraLoginText(r);
+  el.title = formatIwaraLoginBlock(r);
 }
 
 async function refreshIwaraBadge() {

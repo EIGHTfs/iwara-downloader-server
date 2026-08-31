@@ -47,6 +47,19 @@ function getXVersion(urlString) {
 }
 
 // ---------- 请求头 ----------
+/** 发给 Iwara 的 Cookie：丢掉 deleted / 空值。IP 直连 + 精简 UA 不依赖 cf_clearance；残 Cookie 才可能害事。 */
+function cookieForRequest(raw) {
+  const ck = String(raw || "").trim();
+  if (!ck) return "";
+  return ck.split(";").map((s) => s.trim()).filter((p) => {
+    if (!p) return false;
+    if (/deleted/i.test(p)) return false;
+    const eq = p.indexOf("=");
+    const v = eq >= 0 ? p.slice(eq + 1).trim() : "";
+    return !!v;
+  }).join("; ");
+}
+
 function configHeaders(urlString, withAuth) {
   const c = cfg.readConfig();
   const headers = {
@@ -58,8 +71,8 @@ function configHeaders(urlString, withAuth) {
     "Sec-Fetch-Mode": "cors",
     "Sec-Fetch-Site": "same-site"
   };
-  // Cookie（含 cf_clearance 过 CF 挑战；token 登录态一并带上）
-  if (c.iwaraCookie) headers["Cookie"] = c.iwaraCookie;
+  const ck = cookieForRequest(c.iwaraCookie);
+  if (ck) headers["Cookie"] = ck;
   if (c.iwaraAccessToken) headers["Authorization"] = "Bearer " + c.iwaraAccessToken;
   if (withAuth && urlString) headers["X-Version"] = getXVersion(urlString);
   // 诊断日志：确认发送了什么（不打印完整敏感值，只打标记）
@@ -171,7 +184,9 @@ async function fetchJson(url, opts = {}) {
 /** refresh_token → access_token（油猴 localStorage token） */
 async function ensureAccessToken(force) {
   const c = cfg.readConfig();
-  if (!force && c.iwaraAccessToken) return c.iwaraAccessToken;
+  const exp = jwtExpMs(c.iwaraAccessToken);
+  const stillGood = c.iwaraAccessToken && exp && exp - Date.now() > 60 * 1000;
+  if (!force && stillGood) return c.iwaraAccessToken;
   if (!c.iwaraToken) return c.iwaraAccessToken || "";
   const data = await fetchJson(`https://${API_HOST}/user/token`, {
     method: "POST",
@@ -222,24 +237,46 @@ function withExpiry(base) {
   return Object.assign({}, base, loginExpiryMeta(cfg.readConfig()));
 }
 
-/** 检测登录态：GET /user 200 = 已登录，403 CF 挑战 = cookie 失效 */
-async function checkLogin() {
+function packUser(raw) {
+  const user = unwrapUser(raw);
+  const id = user && user.id;
+  const loggedIn = !!(id && user.role !== "anonymous");
+  return {
+    ok: loggedIn,
+    loggedIn,
+    user: loggedIn ? (user.name || user.username || user.id) : "",
+    userId: loggedIn ? id : "",
+    username: loggedIn ? (user.username || "") : ""
+  };
+}
+
+async function fetchUserMe() {
+  return fetchJson(`https://${API_HOST}/user`, { withAuth: false, retries: 1 });
+}
+
+/** 检测登录态：先刷 access_token，再 GET /user。导入配置后应 force 刷新。 */
+async function checkLogin(opts) {
+  const force = !!(opts && opts.force);
   try {
-    try { await ensureAccessToken(false); } catch (_) {}
-    const raw = await fetchJson(`https://${API_HOST}/user`, { withAuth: false, retries: 1 });
-    const user = unwrapUser(raw);
-    return withExpiry({ ok: true, loggedIn: true, user: user && (user.name || user.username || user.id), userId: user && user.id, username: user && user.username });
+    try { await ensureAccessToken(force); } catch (e) {
+      const msg = String(e.message || e);
+      if (msg.startsWith("CF_CHALLENGE")) return withExpiry({ ok: false, loggedIn: false, cfChallenge: true, error: "Cloudflare 挑战未通过（Node TLS 指纹，与 Cookie 无关）" });
+      if (!cfg.readConfig().iwaraToken) return withExpiry({ ok: false, loggedIn: false, error: msg });
+    }
+    const raw = await fetchUserMe();
+    return withExpiry(packUser(raw));
   } catch (e) {
     const msg = String(e.message || e);
-    if (msg.startsWith("CF_CHALLENGE")) return withExpiry({ ok: false, loggedIn: false, cfChallenge: true, error: "Cloudflare 挑战未通过：Cookie 缺少 cf_clearance 或已过期" });
+    if (msg.startsWith("CF_CHALLENGE")) return withExpiry({ ok: false, loggedIn: false, cfChallenge: true, error: "Cloudflare 挑战未通过（Node TLS 指纹，与 Cookie 无关）" });
     if (/HTTP 401/.test(msg) && cfg.readConfig().iwaraToken) {
       try {
         await ensureAccessToken(true);
-        const raw = await fetchJson(`https://${API_HOST}/user`, { withAuth: false, retries: 1 });
-        const user = unwrapUser(raw);
-        return withExpiry({ ok: true, loggedIn: true, user: user && (user.name || user.username || user.id), userId: user && user.id, username: user && user.username });
+        const raw = await fetchUserMe();
+        return withExpiry(packUser(raw));
       } catch (e2) {
-        return withExpiry({ ok: false, loggedIn: false, error: String(e2.message || e2) });
+        const m2 = String(e2.message || e2);
+        if (m2.startsWith("CF_CHALLENGE")) return withExpiry({ ok: false, loggedIn: false, cfChallenge: true, error: "Cloudflare 挑战未通过（Node TLS 指纹，与 Cookie 无关）" });
+        return withExpiry({ ok: false, loggedIn: false, error: m2 });
       }
     }
     return withExpiry({ ok: false, loggedIn: false, error: msg });

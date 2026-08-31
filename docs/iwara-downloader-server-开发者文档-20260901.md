@@ -71,7 +71,9 @@ cd /path/to/iwara-downloader-server
 ./status.sh         # 打印进程 / 端口 / 是否在线
 ```
 
-`start.sh` 会把群晖 Node 套件路径补进 `PATH`（`/usr/local/bin`、`Node.js_v22` / `Node.js_v20`），DSM 默认 PATH 没有 `node`。
+`start.sh` 选 Node 的顺序：`tool/node/bin/node`（项目自带官方 linux-x64 **Node 24**）→ `/usr/local/bin` → 群晖 Node.js_v24 / v22 / v20 套件。DSM 默认 PATH 没有 `node`。
+
+**必须用 Node 24**：群晖套件 Node 22（OpenSSL 1.1）打 `api.iwara.tv` 会被 Cloudflare JS 挑战（403 Just a moment），与有没有 `cf_clearance` 无关。同一台机器、同一个 `104.26.12.12` 泛解析，Node 24 精简 UA + IP/SNI 直连可以直接 200/401。Aria2 能下视频是因为走的是 CDN 文件站，不是 `api.iwara.tv`。`tool/node/` 不入库，部署时解压官方 `node-v24.x-linux-x64` 到该目录。
 
 正式运行副本在群晖共享盘（与 gbmd 同目录）：`/volume6/Game.Patch N MOD/iwara-downloader-server/`。fnOS 上 `/vol02/1000-0-1c60be7b/iwara-downloader-server` 是同一份共享的挂载，改代码后必须在 **SA6400** 上 `./restart.sh`，不要再在 fnOS 起一份抢同一端口。
 
@@ -536,7 +538,14 @@ body 可以是纯 `{ 视频id: 条目 }`、`{ videos: {...} }`，或别人单条
 { "data": "<zip 的 base64>" }
 ```
 
-按 zip 内（或当前项目）清单白名单写回。返回 `{ ok, restored:[], skipped:[], note }`。运行中导入 config/任务后建议 `./restart.sh`。
+按 zip 内（或当前项目）清单白名单写回 `server/config.json`（含 Cookie / Token）。**写盘后立刻 `checkLogin({ force: true })`**：刷 access_token，再 GET `/user`。返回：
+
+```json
+{ "ok": true, "restored": ["server/config.json", ...], "skipped": ["userdata-manifest.json"], "note": "...",
+  "login": { "ok": true, "loggedIn": true, "username": "...", "userId": "...", "remainingDays": 29.4, "warnLevel": "ok" } }
+```
+
+`login.loggedIn=false` 时带 `error` / `cfChallenge`。网页设置页会显示这次登录结果并刷新顶栏。运行中导入任务/密码哈希后仍建议 `./restart.sh`。
 
 当前清单 `files`：
 
@@ -742,7 +751,8 @@ bash scripts/git-push.sh
 | 关键词搜索 | 下拉 type=videos\|users；视频 `sort=date`，作者 `sort=relevance`；关注列表只在作者模式加载；与按时间搜索互不干扰 |
 | 视频索引 | 自己生成精简 `{id:{name,username,title,fileId,duration,tags,createdAt}}`；兼容读取别人完整 dump；sidecar 经 HMAC 短链推给 Aria2 |
 | 账号检测 | 只保留 `GET /api/account-check`（旧 `/api/iwara-check` 已删） |
-| 用户数据 zip | 清单增加 `iwara-index.json`、`sessions.json` |
+| 用户数据 zip | 清单增加 `iwara-index.json`、`sessions.json`；**导入后立刻 `checkLogin({force:true})`，返回 `login`** |
+| Node 运行时 | 项目 `tool/node/` 放官方 Node 24（gitignore）。群晖套件 Node 22 打 `api.iwara.tv` 会被 CF 挑战；Node 24 + 泛解析 104.26.12.12 不需要 cf_clearance |
 
 ### 1.0.2
 

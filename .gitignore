@@ -26,6 +26,10 @@ server/*.bak-*
 .github-credentials
 git_push_token.txt
 
+# 项目自带 Node 运行时（官方 linux-x64，体积大，不入库）
+tool/node/
+tool/node-*.tar.xz
+
 # 环境与构建
 node_modules/
 dist/
