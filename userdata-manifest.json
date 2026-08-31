@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "app": "iwara-downloader-server",
+  "note": "用户数据文件清单。备份/恢复按此收集与写回；files 为精确文件。改动此清单前先确认路径归属。仓库只提交 example / 代码，下列文件均 gitignore，不入库。",
+  "files": [
+    { "rel": "server/config.json",        "desc": "服务配置：iwaraToken / iwaraCookie、下载路径、aria2 RPC、密码哈希、端口等（gitignore 排除，不入库）" },
+    { "rel": "server/download_task.json", "desc": "下载任务列表（含进度/状态/直链 URL，启动时恢复）" },
+    { "rel": "server/search_cache.json",  "desc": "搜索记录缓存（保存/导入导出）" },
+    { "rel": "server/search_task.json",   "desc": "按时间搜索任务状态（启动时恢复未完成搜索）" },
+    { "rel": "server/cdn_hosts_state.json","desc": "CDN 子域动态列表（成功/失败，随下载自动增删）" },
+    { "rel": "server/server.log",         "desc": "运行日志" },
+    { "rel": "server/app.pid",            "desc": "进程 PID（启停脚本使用）" }
+  ],
+  "dirs": []
+}

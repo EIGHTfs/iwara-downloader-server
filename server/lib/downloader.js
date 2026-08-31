@@ -24,9 +24,75 @@ const TASK_FILE = path.join(DATA_DIR, "..", "download_task.json");
 const MAX_RETRY = 3;
 const RETRY_DELAY_MS = 2000;
 
-// 已知可直连下载的 CDN 子域（104.26.12.12 上未被 CF 挑战的）。
-// 下载时若 iwara 返回的下载链接子域失败（403/超时），自动轮换到这些子域。
-const FALLBACK_CDN_HOSTS = ["firefly.iwara.tv", "aiko.iwara.tv", "filesq.iwara.tv"];
+// ---------- CDN 子域动态管理器 ----------
+// 动态维护两个列表，并持久化到外部文件 server/cdn_hosts_state.json（重启不丢）：
+//   GOOD 成功列表 —— 在该子域上成功下载过（优先使用，避免反复踩 403）
+//   BAD  失败列表 —— 在该子域上失败过（403/超时/连接中断，自动跳过）
+// 规则：
+//   - 下载开始时，候选 = [原始子域] + GOOD + 种子列表（排除 BAD）
+//   - 成功后：该子域移出 BAD、加入 GOOD
+//   - 失败后：该子域移出 GOOD、加入 BAD
+//   - 因此成功/失败子域会随实际下载结果动态增删，无需硬编码维护
+const CDN_STATE_FILE = path.join(DATA_DIR, "..", "cdn_hosts_state.json");
+let GOOD_CDN_HOSTS = new Set();             // 已成功子域（按成功时间追加，越新越优先）
+let BAD_CDN_HOSTS = new Set();              // 已失败子域
+// 种子列表：初始候选（首次运行无成功记录时用；也会随下载动态增删修正）
+const SEED_CDN_HOSTS = ["firefly.iwara.tv", "aiko.iwara.tv", "filesq.iwara.tv"];
+
+// 从外部文件恢复两个列表
+function cdnLoadState() {
+  try {
+    if (fs.existsSync(CDN_STATE_FILE)) {
+      const s = JSON.parse(fs.readFileSync(CDN_STATE_FILE, "utf8"));
+      if (Array.isArray(s.good)) GOOD_CDN_HOSTS = new Set(s.good);
+      if (Array.isArray(s.bad)) BAD_CDN_HOSTS = new Set(s.bad);
+      if (GOOD_CDN_HOSTS.size || BAD_CDN_HOSTS.size) {
+        console.log(`[downloader] 已恢复 CDN 子域状态：成功 ${GOOD_CDN_HOSTS.size} 个 / 失败 ${BAD_CDN_HOSTS.size} 个`);
+      }
+    }
+  } catch (_) {}
+}
+
+// 写入外部文件（每次增删都落盘，保证重启后仍记住成功/失败子域）
+function cdnSaveState() {
+  try {
+    fs.writeFileSync(CDN_STATE_FILE, JSON.stringify({
+      good: [...GOOD_CDN_HOSTS],
+      bad: [...BAD_CDN_HOSTS],
+      updatedAt: new Date().toISOString()
+    }, null, 2), "utf8");
+  } catch (_) {}
+}
+
+/** 当前候选子域：原始子域 → 成功列表（新→旧）→ 种子（未失败过） */
+function cdnCandidates(originalHost) {
+  const out = [];
+  const seen = new Set();
+  const push = (h) => {
+    if (h && !seen.has(h) && !BAD_CDN_HOSTS.has(h)) { seen.add(h); out.push(h); }
+  };
+  push(originalHost);
+  [...GOOD_CDN_HOSTS].reverse().forEach(push); // Set 迭代序 = 插入序，反转让最近成功的优先
+  SEED_CDN_HOSTS.forEach(push);
+  return out;
+}
+
+/** 下载成功后调用：把子域沉淀进成功列表 */
+function cdnMarkSuccess(host) {
+  if (!host) return;
+  BAD_CDN_HOSTS.delete(host);
+  GOOD_CDN_HOSTS.delete(host);
+  GOOD_CDN_HOSTS.add(host); // 追加到末尾（最新成功）
+  cdnSaveState();
+}
+
+/** 下载失败后调用：把子域移入失败列表 */
+function cdnMarkFail(host) {
+  if (!host) return;
+  GOOD_CDN_HOSTS.delete(host);
+  BAD_CDN_HOSTS.add(host);
+  cdnSaveState();
+}
 
 // keep-alive 连接池（避免每文件吃一次慢首连接）
 const HTTPS_AGENT = new https.Agent({ keepAlive: true, keepAliveMsecs: 60000, maxSockets: 64, maxFreeSockets: 32 });
@@ -128,8 +194,9 @@ function partBytes(partPath) {
 
 /**
  * direct 后端：带 Range 断点续传的单文件下载
- * 子域自动轮换：原始下载链接的子域若返回 403（CF 挑战）/超时，
- * 自动把 URL 里的子域替换成 FALLBACK_CDN_HOSTS 里可用的子域重试。
+ * 子域自动轮换（动态）：原始下载链接的子域若失败（403/超时/连接中断），
+ * 自动尝试 GOOD 成功列表 / 种子列表中的子域；成功→写入 GOOD，失败→写入 BAD，
+ * 两个列表持久化到外部文件 cdn_hosts_state.json，随实际下载结果动态增删。
  * @returns {Promise<'done'|'retry'>}
  */
 function downloadToFile(item, onProgress) {
@@ -139,8 +206,8 @@ function downloadToFile(item, onProgress) {
     const start = partBytes(tmpFile);
     const u0 = new URL(url);
 
-    // 候选子域：原始 + 备用（去重）
-    const candidates = [u0.hostname, ...FALLBACK_CDN_HOSTS].filter((h, i, a) => a.indexOf(h) === i);
+    // 候选子域（动态）：原始子域 → GOOD 成功列表（新→旧）→ 种子（未失败过）
+    const candidates = cdnCandidates(u0.hostname);
     let ci = 0;
 
     const attempt = () => {
@@ -168,6 +235,7 @@ function downloadToFile(item, onProgress) {
           // 206 = 断点续传；200 = 重新开始（服务器不支持 Range）
           if (res.statusCode === 403 || res.statusCode === 404 || (res.statusCode !== 200 && res.statusCode !== 206)) {
             res.resume();
+            cdnMarkFail(host); // 失败 → 写入 BAD 列表
             if (ci < candidates.length) {
               console.log(`[downloader] ${host} → HTTP ${res.statusCode}，换子域重试 (${ci}/${candidates.length})`);
               return attempt();
@@ -188,6 +256,7 @@ function downloadToFile(item, onProgress) {
           stream.on("finish", () => {
             // 校验：若已到达或超过总大小则完成（无法精确校验时以 HTTP 结束为准）
             fs.renameSync(tmpFile, item.savePath);
+            cdnMarkSuccess(host); // 成功 → 写入 GOOD 列表
             resolve("done");
           });
           stream.on("error", (e) => reject(e));
@@ -201,6 +270,7 @@ function downloadToFile(item, onProgress) {
       });
       req.on("error", (e) => {
         // 连接级错误（socket hang up / ECONNRESET 等）→ 换子域重试
+        cdnMarkFail(host);
         if (ci < candidates.length) {
           console.log(`[downloader] ${host} → ${String(e.message).slice(0, 40)}，换子域重试`);
           return attempt();
@@ -214,26 +284,84 @@ function downloadToFile(item, onProgress) {
   });
 }
 
-/** aria2 后端：addUri 推送 */
+/** aria2 后端：addUri 推送（支持 http/https；DSM 自签名证书忽略校验） */
 async function aria2Add(item) {
   const c = cfg.readConfig();
   const token = c.aria2Token;
-  const params = [[item.url], { out: sanitizeFileName(item.file) }];
-  if (token) params[1]["header"] = [`Cookie: ${c.iwaraCookie || ""}`];
+  const options = {
+    out: sanitizeFileName(item.file),
+    "max-connection-per-server": "4",
+    "split": "4",
+    "continue": "true",
+    "allow-overwrite": "false",
+    "auto-file-renaming": "false"
+  };
+  if (c.downloadPath && c.downloadPath.trim()) options["dir"] = c.downloadPath.trim();
+  // 关键：aria2 默认 UA 是 aria2/1.37.0，Cloudflare 会 403 拦截；
+  // 必须带精简浏览器 UA（NO_AWK 版，与 direct 后端一致）才能过 CF
+  const headers = [`User-Agent: ${api.DEFAULT_UA}`];
+  // 只传含 cf_clearance 的 Cookie；过期/deleted 的 _ga 会让 CF 直接 403
+  if (c.iwaraCookie && /cf_clearance=/.test(c.iwaraCookie) && !/deleted/i.test(c.iwaraCookie)) {
+    headers.push(`Cookie: ${c.iwaraCookie}`);
+  }
+  options["header"] = headers;
+  // 群晖 DNS Server 套件：*.iwara.tv → 104.26.12.12（系统 127.0.0.1:53 可能未监听）
+  options["dns-server"] = "10.10.10.64";
+  const params = [[item.url], options];
   const body = {
     jsonrpc: "2.0",
     id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(16).slice(2),
     method: "aria2.addUri",
     params: token ? ["token:" + token].concat(params) : params
   };
-  const resp = await fetch(c.aria2Path || "http://127.0.0.1:6800/jsonrpc", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body)
+
+  const endpoint = c.aria2Path && c.aria2Path.trim() ? c.aria2Path.trim() : "http://127.0.0.1:6800/jsonrpc";
+
+  // 用 https.request（而非 undici fetch）：DSM 常用自签名证书，需 rejectUnauthorized:false
+  const { request } = endpoint.startsWith("https") ? require("https") : require("http");
+  const result = await new Promise((resolve, reject) => {
+    let u;
+    try {
+      u = new URL(endpoint);
+    } catch (e) {
+      return reject(new Error("aria2 RPC 地址无效: " + endpoint));
+    }
+    const payload = JSON.stringify(body);
+    const req = request(
+      {
+        hostname: u.hostname,
+        port: u.port || (u.protocol === "https:" ? 443 : 80),
+        path: u.pathname + u.search,
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "content-length": Buffer.byteLength(payload)
+        },
+        rejectUnauthorized: false, // DSM 自签名证书
+        timeout: 20000
+      },
+      (res) => {
+        let d = "";
+        res.on("data", (c) => (d += c));
+        res.on("end", () => {
+          try {
+            const j = JSON.parse(d);
+            if (j.error) return reject(new Error((j.error.message) || `aria2 错误 code=${j.error.code}`));
+            resolve(j.result);
+          } catch (e) {
+            reject(new Error("aria2 返回非 JSON: " + String(d).slice(0, 120)));
+          }
+        });
+      }
+    );
+    req.on("error", (e) => reject(e));
+    req.on("timeout", () => {
+      try { req.destroy(new Error("aria2 RPC 超时")); } catch (_) {}
+    });
+    req.write(payload);
+    req.end();
   });
-  const data = await resp.json();
-  if (!resp.ok || data.error) throw new Error((data.error && data.error.message) || "aria2 RPC 失败");
-  return data.result; // gid
+  return result; // gid
 }
 
 // ---------- 任务循环 ----------
@@ -258,6 +386,20 @@ async function runDownloadLoop() {
       saveTask();
 
       if (c.downloadBackend === "aria2") {
+        // aria2：也先取 fresh 链接（下载链接会到期，不能复用旧 URL）
+        const info = await api.getVideoInfo(item.id);
+        item.url = info.downloadUrl;
+        if (info.file && info.file.size) item.total = info.file.size;
+        if (!item.url) throw new Error("无法获取下载链接: " + (info.error || "未知"));
+        // 用文件名模板生成文件名（aria2 的 out 选项）
+        item.file = applyFileNameTemplate(c.fileNameTemplate, {
+          title: info.title || item.title,
+          alias: info.alias || "",
+          id: item.id,
+          author: info.author || item.author,
+          quality: info.quality || "",
+          uploadTime: info.uploadTime
+        });
         await aria2Add(item);
         // aria2 异步下载，无法（简单）追踪进度 → 直接标记为已提交
         item.state = "submitted";
@@ -422,6 +564,9 @@ function retryFailed() {
   }
   return n;
 }
+
+// 模块加载时恢复 CDN 子域成功/失败列表（从外部文件 cdn_hosts_state.json）
+cdnLoadState();
 
 module.exports = {
   getTask, restorePendingTask,

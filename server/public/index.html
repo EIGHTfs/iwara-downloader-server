@@ -3,115 +3,223 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>iwara-downloader-server</title>
+<link rel="icon" type="image/png" href="favicon.png">
+<title>iwara-downloader</title>
 <link rel="stylesheet" href="style.css">
+<script>
+try {
+  const th = localStorage.getItem("gbmd-theme");
+  if (th === "night") document.documentElement.setAttribute("data-theme", "night");
+} catch (_) {}
+</script>
 </head>
 <body>
 <header>
-  <h1>🌐 iwara-downloader</h1>
-  <nav id="tabs">
-    <button data-tab="download" class="active">⬇ 下载</button>
-    <button data-tab="progress">📊 进度</button>
-    <button data-tab="search">🔍 搜索</button>
-    <button data-tab="settings">⚙ 设置</button>
-  </nav>
-  <span id="userscript-link" style="position:relative">
-    <a href="/userscript" id="btn-userscript" style="color:#2f6fed;font-size:13px;text-decoration:none;border:1px solid #c9dcff;padding:5px 10px;border-radius:6px;background:#eef4ff">📥 手机油猴脚本</a>
-  </span>
-  <span id="conn"></span>
+  <div style="display:flex;align-items:center">
+    <h1>🌐 iwara</h1>
+    <span class="sub">Iwara Video Downloader</span>
+  </div>
+  <div class="right">
+    <span id="serverTime" class="sub"></span>
+    <a class="ghost" href="/userscript" id="btn-userscript" style="text-decoration:none;display:inline-block;padding:6px 14px;border-radius:8px;border:1px solid var(--border);background:var(--card2);color:var(--text);font-size:13px">📥 油猴脚本</a>
+    <button class="ghost" id="themeBtn" type="button" title="切换白天/夜间模式">🌙 夜间</button>
+    <button class="ghost" id="logoutBtn" type="button">退出登录</button>
+  </div>
 </header>
 
-<main>
-  <!-- 下载 -->
-  <section id="tab-download" class="tab active">
-    <h2>批量下载</h2>
-    <p class="hint">输入视频 ID 或完整链接，每行一个，然后点「预解析」查看直链，或直接「开始下载」。</p>
-    <textarea id="dl-input" rows="10" placeholder="例如：&#10;iwara.tv/video/xxxxxx&#10;xxxxxx"></textarea>
-    <div class="row">
-      <button id="btn-preview">🔎 预解析</button>
-      <button id="btn-dl" class="primary">⬇ 开始下载</button>
-      <span id="dl-feedback" class="fb"></span>
-    </div>
-    <table id="preview-table" class="hidden">
-      <thead><tr><th></th><th>ID</th><th>标题</th><th>作者</th><th>质量</th><th>文件名</th><th>状态</th></tr></thead>
-      <tbody></tbody>
-    </table>
-  </section>
+<div id="noPwdWarn" style="display:none;background:#fff3cd;color:#664d03;padding:8px 16px;text-align:center;font-size:13px">
+  ⚠️ 尚未设置访问密码 —— 当前局域网内任何人可访问本服务（设置页可修改密码）。
+</div>
 
-  <!-- 进度 -->
-  <section id="tab-progress" class="tab">
-    <h2>下载进度</h2>
-    <div class="row">
-      <button id="btn-pause">⏸ 暂停</button>
-      <button id="btn-resume">▶ 恢复</button>
-      <button id="btn-stop">⏹ 停止</button>
-      <button id="btn-retry">🔁 重试失败</button>
-      <label>并发 <input id="concurrency" type="number" min="1" max="8" value="3" style="width:60px"></label>
-      <button id="btn-setconc">设置</button>
-    </div>
-    <div id="task-summary" class="summary"></div>
-    <div id="task-list"></div>
-  </section>
+<div class="container">
+  <div class="tabs" id="tabs">
+    <div class="tab active" data-tab="download">⬇ 下载</div>
+    <div class="tab" data-tab="progress">📊 下载进度</div>
+    <div class="tab" data-tab="search">🔍 搜索</div>
+    <div class="tab" data-tab="settings">⚙ 设置</div>
+  </div>
 
-  <!-- 搜索 -->
-  <section id="tab-search" class="tab">
-    <h2>视频搜索</h2>
-    <div class="row">
-      <input id="search-keyword" placeholder="关键词（如：奥黛塔），留空则按下方排序拉取" style="width:240px">
-      <select id="search-type">
-        <option value="date">最新</option>
-        <option value="trending">热门</option>
-        <option value="views">观看最多</option>
-      </select>
-      <input id="search-user" placeholder="用户名（可选，限该用户视频）" style="width:200px">
-      <button id="btn-search">🔍 搜索</button>
-      <button id="btn-sel-all">全选</button>
-      <button id="btn-dl-sel" class="primary">⬇ 下载选中</button>
-    </div>
-    <table id="search-table">
-      <thead><tr><th></th><th>ID</th><th>标题</th><th>作者</th><th>上传时间</th></tr></thead>
-      <tbody></tbody>
-    </table>
-  </section>
-
-  <!-- 设置 -->
-  <section id="tab-settings" class="tab">
-    <h2>设置</h2>
-    <div class="form">
-      <label>访问密码保护：
-        <input id="set-password" type="password" placeholder="设置/修改密码（至少4位）">
-        <button id="btn-setpwd">保存</button>
-      </label>
-      <hr>
-      <label>下载根目录：
-        <input id="set-downloadPath" placeholder="/vol1/媒体/Iwara">
-        <span class="hint">视频存为 <code>&lt;root&gt;/&lt;作者&gt;/&lt;原始文件名&gt;</code></span>
-      </label>
-      <label>作者子目录：
-        <select id="set-useAuthorSubdir"><option value="true">是</option><option value="false">否（直接存根目录）</option></select>
-      </label>
-      <label>下载后端：
-        <select id="set-downloadBackend">
-          <option value="direct">直连（Node 下载，断点续传）</option>
-          <option value="aria2">Aria2（需本地 Aria2 RPC）</option>
-        </select>
-      </label>
-      <label>并发数：<input id="set-concurrency" type="number" min="1" max="8" style="width:70px"></label>
-      <label>Aria2 RPC：<input id="set-aria2Path" placeholder="http://127.0.0.1:6800/jsonrpc"></label>
-      <label>Aria2 Token：<input id="set-aria2Token" type="password"></label>
-      <hr>
-      <label class="block">Iwara Cookie（含 cf_clearance，从浏览器复制最新 Cookie）：
-        <textarea id="set-iwaraCookie" rows="4" placeholder="cf_clearance=...; token=...; _ga=...&#10;&#10;也可直接粘贴油猴脚本自动复制的组合文本：&#10;Cookie=...&#10;Token=...&#10;AccessToken=..."></textarea>
-      </label>
-      <div class="row">
-        <button id="btn-save-settings" class="primary">💾 保存设置</button>
-        <button id="btn-iwara-check">🩺 检测 iwara 登录态</button>
-        <span id="settings-feedback" class="fb"></span>
+  <!-- ============ 下载 ============ -->
+  <div class="tab-panel active" id="panel-download">
+    <div class="card">
+      <h2>下载视频</h2>
+      <p class="hint">每行一个视频链接或视频 ID</p>
+      <textarea id="batchInput" rows="8" placeholder="每行一个视频链接或视频 ID" style="width:100%"></textarea>
+      <div class="row mt">
+        <button class="primary" id="batchBtn" type="button">开始下载</button>
+        <button class="ghost" id="clearBtn" type="button">清空</button>
       </div>
-      <div id="iwara-check-result" class="result hidden"></div>
+      <div class="status" id="batchStatus"></div>
     </div>
-  </section>
-</main>
+    <div class="card">
+      <h2>下载流程说明</h2>
+      <p class="hint">① 解析视频 ID，每次重新向 Iwara 拉取 fresh 直链（直链会过期，不可复用）<br>
+      ② 按文件名模板生成保存名（默认 Iwara_-_{TITLE}_[{ID}]_[{QUALITY}].mp4）<br>
+      ③ 直连后端：IP 直连 Cloudflare 边缘，失败自动换 CDN 子域并断点续传<br>
+      ④ Aria2 后端：把直链推到 RPC，进度请到 Aria2 WebUI 查看</p>
+    </div>
+  </div>
+
+  <!-- ============ 下载进度 ============ -->
+  <div class="tab-panel" id="panel-progress">
+    <div class="card">
+      <h2>下载进度</h2>
+      <div class="row">
+        <span id="taskState" style="font-weight:600">无任务</span>
+        <button id="pauseBtn" type="button" disabled>暂停</button>
+        <button id="resumeBtn" type="button" disabled>继续</button>
+        <button id="stopBtn" type="button" disabled class="danger">终止</button>
+        <button id="retryBtn" type="button" disabled class="ghost">重试失败</button>
+      </div>
+      <div class="progress-wrap mt">
+        <div class="progress-bar"><div class="progress-fill" id="progressFill" style="width:0%"></div></div>
+      </div>
+      <div id="taskMeta"></div>
+      <div id="activeList" style="margin-top:6px"></div>
+      <div class="row mt">
+        <label>并发数 <input type="number" id="concurrencyInput" min="1" max="32" value="3" style="width:70px"></label>
+        <button class="ghost" id="concurrencyBtn" type="button">应用</button>
+        <div class="status" id="concurrencyStatus"></div>
+      </div>
+      <div id="taskList" class="mt"></div>
+    </div>
+  </div>
+
+  <!-- ============ 搜索 ============ -->
+  <div class="tab-panel" id="panel-search">
+    <div class="card">
+      <h2>搜索视频</h2>
+      <p class="hint">关键词搜索（与官网一致）或按时间搜索（按最新翻页，用上传日期过滤），共用下方分级筛选</p>
+      <div class="row">
+        <label><input type="checkbox" id="filterNormal" checked> 普通</label>
+        <label><input type="checkbox" id="filterNsfw" checked> R18</label>
+      </div>
+      <div class="row mt">
+        <label>关键词 <input type="text" id="kwInput" placeholder="输入关键词" style="width:240px"></label>
+        <label>排序
+          <select id="searchSort">
+            <option value="date">最新</option>
+            <option value="trending">热门</option>
+            <option value="views">观看最多</option>
+          </select>
+        </label>
+        <label>用户名 <input type="text" id="searchUser" placeholder="可选" style="width:160px"></label>
+        <button class="primary" id="kwSearchBtn" type="button">搜索</button>
+      </div>
+      <div class="row mt">
+        <label>开始日期 <input type="date" id="searchStart"></label>
+        <button class="ghost" id="earliestBtn" type="button" title="设为最早（2000-01-01）">最早</button>
+        <label>结束日期 <input type="date" id="searchEnd"></label>
+        <button class="primary" id="searchBtn" type="button">按时间搜索</button>
+        <button class="ghost" id="stopSearchBtn" type="button" style="display:none">停止搜索</button>
+      </div>
+      <div class="status" id="kwStatus"></div>
+      <div class="status" id="searchStatus"></div>
+    </div>
+    <div class="card">
+      <h2>搜索结果 <span id="resultCount" class="sub"></span></h2>
+      <div class="row" style="margin-bottom:8px">
+        <button class="primary" id="selectAllBtn" type="button" title="只勾选符合上方「普通/R18 筛选」的结果">全选</button>
+        <button class="ghost" id="selectNoneBtn" type="button">全不选</button>
+        <button class="success" id="downloadSelectedBtn" type="button">下载勾选项</button>
+        <button class="ghost" id="saveSearchBtn" type="button" title="把当前搜索结果覆盖写入 search_cache.json">保存</button>
+        <button class="ghost" id="clearSearchBtn" type="button">清空列表</button>
+        <button class="ghost" id="exportSearchBtn" type="button" title="导出当前搜索记录为 JSON 文件">导出记录</button>
+        <button class="ghost" id="importSearchBtn" type="button" title="上传 JSON 文件导入搜索记录（按 id 合并，导入覆盖原有）">导入记录</button>
+        <input type="file" id="importSearchFile" accept=".json,application/json" style="display:none">
+      </div>
+      <div class="result-list" id="searchResultList"><div class="empty">尚未搜索</div></div>
+    </div>
+  </div>
+
+  <!-- ============ 设置 ============ -->
+  <div class="tab-panel" id="panel-settings">
+    <div class="card">
+      <h2>下载路径与命名</h2>
+      <p class="hint">直连后端填本机路径；Aria2 后端填 Aria2 所在机器上的路径。模板变量：{TITLE} {ALIAS} {ID} {AUTHOR} {QUALITY} {UPLOADTIME} {NOWTIME}</p>
+      <div class="row">
+        <label style="flex:1">下载根目录
+          <input type="text" id="set-downloadPath" placeholder="下载路径根目录" style="width:100%">
+        </label>
+      </div>
+      <div class="row mt">
+        <label style="flex:1">文件名模板
+          <input type="text" id="set-fileNameTemplate" style="width:100%">
+        </label>
+      </div>
+      <div class="row mt">
+        <label>作者子目录
+          <select id="set-useAuthorSubdir">
+            <option value="false">否（直接存根目录）</option>
+            <option value="true">是</option>
+          </select>
+        </label>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>下载后端</h2>
+      <div class="row">
+        <label>后端
+          <select id="set-downloadBackend">
+            <option value="direct">直连（Node 下载，断点续传）</option>
+            <option value="aria2">Aria2（JSON-RPC 推送）</option>
+          </select>
+        </label>
+        <label>并发数 <input type="number" id="set-concurrency" min="1" max="32" style="width:70px"></label>
+      </div>
+      <div class="row mt">
+        <label style="flex:1">Aria2 RPC
+          <input type="text" id="set-aria2Path" placeholder="RPC 地址" style="width:100%">
+        </label>
+      </div>
+      <div class="row mt">
+        <label style="flex:1">Aria2 Token
+          <input type="password" id="set-aria2Token" placeholder="RPC 密钥" style="width:100%">
+        </label>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Iwara 凭证</h2>
+      <p class="hint">可粘贴油猴脚本复制的组合文本（Cookie= / Token= / AccessToken=），或只填 Cookie。油猴脚本见页头「油猴脚本」。</p>
+      <div class="row">
+        <label style="flex:1">Cookie / 凭证文本
+          <textarea id="set-iwaraCookie" rows="4" placeholder="Cookie 或油猴组合文本" style="width:100%"></textarea>
+        </label>
+      </div>
+      <div class="row mt">
+        <button id="gbLoginCheckBtn" type="button">检测登录状态</button>
+        <span id="gbLoginStatus"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>修改密码</h2>
+      <div class="row">
+        <input type="password" id="newPwd" placeholder="新密码（至少 4 位）">
+        <button class="primary" id="changePwdBtn" type="button">修改</button>
+      </div>
+      <div class="status" id="pwdStatus"></div>
+    </div>
+
+    <div class="card">
+      <h2>📦 数据备份 / 恢复</h2>
+      <p class="hint">导出为 zip：包含全部用户数据（配置、搜索记录、下载任务、CDN 状态等，按 <code>userdata-manifest.json</code> 清单）。换机/重装后导入即可恢复。</p>
+      <div class="row">
+        <button class="primary" id="exportDataBtn" type="button">⬇ 导出用户数据</button>
+        <button class="ghost" id="importDataBtn" type="button">⬆ 导入用户数据</button>
+        <input type="file" id="importDataFile" accept=".zip" style="display:none">
+      </div>
+      <div class="status" id="dataStatus"></div>
+    </div>
+
+    <div class="row mt">
+      <button class="primary" id="saveSettingsBtn" type="button">保存设置</button>
+      <div class="status" id="settingsStatus"></div>
+    </div>
+  </div>
+</div>
 
 <script src="app.js"></script>
 </body>

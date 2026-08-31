@@ -1,41 +1,286 @@
-/* iwara-downloader-server 前端样式（浅色简洁风格） */
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body { font: 14px/1.6 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; background: #f6f7f9; color: #222; }
-header { display: flex; align-items: center; gap: 20px; padding: 12px 24px; background: #fff; border-bottom: 1px solid #e2e5ea; position: sticky; top: 0; z-index: 10; }
-header h1 { font-size: 18px; margin: 0; }
-nav { display: flex; gap: 4px; }
-nav button { padding: 6px 14px; border: 1px solid #d6dae1; background: #fff; border-radius: 6px; cursor: pointer; font-size: 13px; }
-nav button.active { background: #2f6fed; color: #fff; border-color: #2f6fed; }
-#conn { margin-left: auto; font-size: 12px; color: #7a8494; }
-main { max-width: 1100px; margin: 20px auto; padding: 0 16px; }
-.tab { display: none; }
-.tab.active { display: block; }
-h2 { font-size: 16px; margin: 0 0 10px; }
-.hint { color: #7a8494; font-size: 12px; margin-bottom: 10px; }
-.row { display: flex; align-items: center; gap: 8px; margin: 10px 0; flex-wrap: wrap; }
-button { padding: 6px 14px; border: 1px solid #c9cfd8; background: #fff; border-radius: 6px; cursor: pointer; }
-button.primary { background: #2f6fed; border-color: #2f6fed; color: #fff; }
-button:hover { filter: brightness(0.97); }
-textarea, input, select { padding: 6px 8px; border: 1px solid #c9cfd8; border-radius: 6px; font: inherit; }
-textarea { width: 100%; font-family: ui-monospace, Consolas, monospace; }
-.fb { font-size: 13px; color: #2f6fed; }
-table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; }
-th, td { padding: 7px 10px; border-bottom: 1px solid #edf0f4; text-align: left; font-size: 13px; }
-th { background: #fafbfc; color: #5a6472; font-weight: 600; }
-td.id { font-family: ui-monospace, Consolas, monospace; color: #2f6fed; }
-.hidden { display: none; }
-.summary { padding: 8px 12px; background: #eef4ff; border-radius: 6px; margin: 10px 0; font-size: 13px; }
-.form label { display: block; margin: 8px 0; }
-.form input[type=text], .form input[type=password], .form input:not([type]), .form select { width: 100%; max-width: 560px; }
-.form .block textarea { max-width: 560px; }
-.result { margin-top: 10px; padding: 10px 14px; border-radius: 6px; background: #f0f4f9; font-size: 13px; white-space: pre-wrap; }
-.result.ok { background: #e7f6ec; }
-.result.err { background: #fdecec; }
-.prog { background: #edf0f4; border-radius: 4px; height: 8px; width: 120px; display: inline-block; vertical-align: middle; }
-.prog i { display: block; height: 8px; background: #2f6fed; border-radius: 4px; }
-.state-done { color: #1a9d4b; }
-.state-failed, .state-error { color: #d0392f; }
-.state-downloading { color: #2f6fed; }
-.state-pending { color: #8a94a3; }
-hr { border: none; border-top: 1px solid #e2e5ea; margin: 14px 0; }
-code { background: #eef1f5; padding: 1px 5px; border-radius: 4px; }
+/* ============================================================
+   gbmd - 界面样式
+   2026-08-26 用户要求：蓝白 = 白天模式（默认）；香蕉风深色 = 夜间模式，网页支持切换
+   （夜间配色：深蓝灰底 + 香蕉黄 accent #f6b73c）
+   ============================================================ */
+:root {
+  /* ---- 白天模式（蓝白） ---- */
+  --bg: #f5f6f8;
+  --card: #ffffff;
+  --card2: #f0f2f5;
+  --border: #e2e5ea;
+  --text: #1f2937;
+  --muted: #6b7280;
+  --primary: #2563eb;
+  --accent2: #93c5fd;   /* 渐变次色（浅蓝） */
+  --success: #16a34a;
+  --fail: #dc2626;
+  --warn: #d97706;
+}
+:root[data-theme="night"] {
+  /* ---- 夜间模式（香蕉风深色） ---- */
+  --bg: #151d23;
+  --card: #1e2a33;
+  --card2: #26343f;
+  --border: #33434f;
+  --text: #e6edf3;
+  --muted: #8ba3b5;
+  --primary: #f6b73c;   /* 香蕉黄 */
+  --accent2: #e6a024;
+  --success: #4ade80;
+  --fail: #f87171;
+  --warn: #d97706;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font: 14px/1.6 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 20px;
+  background: linear-gradient(135deg, var(--card), var(--card2));
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+:root[data-theme="night"] header { background: linear-gradient(135deg, #1c2730, #1a232b); }
+header h1 { margin: 0; font-size: 20px; }
+.sub { color: var(--muted); font-size: 12px; }
+.right { display: flex; align-items: center; gap: 12px; }
+.container { max-width: 1080px; margin: 0 auto; padding: 16px; }
+.tabs {
+  display: flex;
+  gap: 4px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 4px;
+  margin-bottom: 16px;
+  overflow-x: auto;
+}
+.tab {
+  padding: 8px 18px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--muted);
+  white-space: nowrap;
+  user-select: none;
+}
+.tab.active { background: linear-gradient(135deg, var(--primary), var(--accent2)); color: #1a1a1a; font-weight: 600; }
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+.card h2 { margin: 0 0 12px; font-size: 16px; color: var(--primary); border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+.hint { color: var(--muted); font-size: 12px; }
+.row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.row.mt, .mt { margin-top: 10px; }
+button {
+  padding: 6px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--card2);
+  color: var(--text);   /* 2026-08-26 修复：夜间模式按钮字体暗色 → 显式跟随主题 */
+  cursor: pointer;
+  font-size: 13px;
+}
+button.ghost { background: var(--card2); border: 1px solid var(--border); color: var(--text); }
+button.primary { background: linear-gradient(135deg, var(--primary), var(--accent2)); color: #1a1a1a; border-color: var(--primary); font-weight: 600; }
+button.success { background: var(--success); color: #fff; border-color: var(--success); }
+button.danger { background: var(--fail); color: #fff; border-color: var(--fail); }
+button:disabled { opacity: .5; cursor: not-allowed; }
+input, select, textarea {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  background: var(--card2);
+  color: var(--text);
+}
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary); outline-offset: -1px; }
+.status { color: var(--muted); font-size: 12px; }
+.status.ok { color: var(--success); }
+.status.err { color: var(--fail); }
+.result-list { margin-top: 8px; max-height: 480px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--card); }
+.result-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--border);
+}
+.result-item .name { flex: 1; }
+.result-item a { color: var(--primary); text-decoration: none; }
+.result-item .meta { color: var(--muted); font-size: 12px; }
+.badge { padding: 1px 8px; border-radius: 999px; font-size: 11px; }
+.badge.nsfw { background: rgba(220,38,38,.15); color: var(--fail); }
+.badge.normal { background: rgba(22,163,74,.15); color: var(--success); }
+.empty { color: var(--muted); text-align: center; padding: 24px; }
+
+/* ============================================================
+   下载任务列表（香蕉风样式配色）
+   ============================================================ */
+.progress-wrap { background: var(--card2); border-radius: 8px; height: 10px; overflow: hidden; }
+.progress-bar { height: 100%; }
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--primary), var(--accent2));
+  transition: width .3s;
+}
+.mod-group {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 10px;
+  overflow: hidden;
+  background: var(--card);
+}
+.mod-group-head {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--card2);
+  font-size: 13px;
+}
+.mod-group-head > span { min-width: 0; word-break: break-word; }
+.mod-group-dir {
+  color: var(--muted);
+  font-size: 12px;
+  word-break: break-all;
+  max-width: 60%;
+  text-align: right;
+}
+.item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+}
+.item .icon { width: 22px; text-align: center; flex-shrink: 0; }
+.item.ok .icon { color: var(--success); }
+.item.fail .icon { color: var(--fail); }
+.item .status-text {
+  color: var(--muted);
+  font-size: 12px;
+  margin-left: auto;
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 45%;
+  word-break: break-all;
+  text-align: right;
+}
+/* 文件名 + 每行文件下载进度条 */
+.item-name { display: block; flex: 1; min-width: 0; word-break: break-all; line-height: 1.45; }
+.item-name .row-bar { margin-top: 3px; }
+.row-bar { display: block; width: 100%; height: 4px; background: var(--card2); border-radius: 2px; overflow: hidden; }
+.row-bar-fill { display: block; height: 100%; border-radius: 2px; transition: width .3s; }
+.row-bar-ok .row-bar-fill { background: var(--success); }
+.row-bar-active .row-bar-fill { background: #3b82f6; }
+.row-bar-fail .row-bar-fill { background: var(--fail); }
+.row-bar-pending .row-bar-fill { background: transparent; }
+/* 每行图片项对应的预览缩略图 */
+.item .row-thumb {
+  width: 56px; height: 56px; object-fit: cover;
+  border-radius: 4px; border: 1px solid var(--border); flex-shrink: 0;
+}
+.mm-retry-btn, .mm-skip-btn { padding: 2px 8px; font-size: 12px; margin-left: 4px; }
+.grid-map-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
+.mm-mis {
+  font-size: 13px;
+  padding: 4px 8px;
+  background: var(--card2);
+  border-radius: 6px;
+  margin: 4px 0;
+  word-break: break-all;
+}
+.auth-wrap {
+  max-width: 420px;
+  margin: 80px auto;
+  padding: 0 16px;
+}
+.auth-wrap .card { display: flex; flex-direction: column; gap: 10px; }
+.auth-wrap h1 { text-align: center; }
+
+/* 目录选择弹窗（设置页读取本地选择） */
+.modal-mask {
+  position: fixed; inset: 0; background: rgba(0,0,0,.45);
+  display: flex; align-items: center; justify-content: center; z-index: 100;
+}
+.modal {
+  background: var(--card); border-radius: 10px; padding: 16px; width: 560px; max-width: 92vw;
+  max-height: 80vh; display: flex; flex-direction: column;
+}
+.modal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.browse-path {
+  background: var(--card2); border-radius: 6px; padding: 6px 10px;
+  font-size: 12px; word-break: break-all; margin-bottom: 8px;
+}
+.browse-list { flex: 1; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; }
+.browse-item {
+  padding: 6px 10px; cursor: pointer; font-size: 13px;
+  border-bottom: 1px solid var(--border); word-break: break-all;
+}
+.browse-item:hover { background: var(--card2); }
+
+/* 下载进度预览图（下载时预览图） */
+.row-thumb {
+  width: 56px; height: 56px; object-fit: cover; border-radius: 6px;
+  border: 1px solid var(--border); margin-left: 8px;
+}
+.mm-retry-btn, .mm-skip-btn { padding: 2px 8px; font-size: 12px; }
+
+/* ================= 手机端适配（≤768px） ================= */
+@media (max-width: 768px) {
+  .container { padding: 12px; }
+  .card { padding: 14px; }
+  header { flex-wrap: wrap; gap: 6px; padding: 10px 14px; }
+  header .sub { display: none; }
+  .tabs { overflow-x: auto; }
+  .tab { flex: 0 0 auto; min-width: 92px; padding: 10px 8px; }
+  button { padding: 10px 14px; }
+  .item { flex-wrap: wrap; align-items: flex-start; padding: 8px 12px; gap: 4px 8px; }
+  .item .icon { width: 20px; line-height: 1.45; }
+  .item > span:nth-child(2) { flex-basis: 100%; }
+  .item .status-text { flex-basis: 100%; margin-left: 0; text-align: left; padding-left: 28px; }
+  .mod-group-head { flex-direction: column; align-items: flex-start; gap: 3px; padding: 10px 12px; }
+  .mod-group-dir { max-width: 100%; text-align: left; }
+  .grid-map-row { flex-direction: column; align-items: stretch; }
+  .result-item { flex-wrap: wrap; }
+  .result-item .name { flex-basis: 100%; min-width: 0; word-break: break-word; }
+}
+
+/* 可搜索角色下拉（2026-08-26：datalist 一次性 140 条挤不下 → 自绘过滤下拉） */
+.combo-list {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 200px;
+  max-height: 260px;
+  overflow-y: auto;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  z-index: 50;
+  box-shadow: 0 6px 18px rgba(0,0,0,.18);
+}
+.combo-item {
+  padding: 6px 10px;
+  font-size: 13px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+  word-break: break-all;
+}
+.combo-item:hover, .combo-item.hover { background: var(--primary); color: #fff; }
+.combo-empty { padding: 8px 10px; font-size: 12px; color: var(--muted); }

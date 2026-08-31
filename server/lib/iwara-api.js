@@ -234,17 +234,28 @@ async function getVideoInfo(id) {
 
 /**
  * 视频列表 / 搜索（iwara /videos 接口）
- * @param {Object} q - { sort:'date'|'trending'|'views'|'rating', page, limit, user, subscribed, type, search }
+ * @param {Object} q - { sort:'date'|'trending'|'views'|'rating', page, limit, user, subscribed, type, search, rating }
  */
 async function listVideos(q = {}) {
   const params = new URLSearchParams();
-  params.set("sort", q.sort || "date");
   params.set("page", String(q.page ?? 0));
   params.set("limit", String(q.limit ?? 20));
+  if (q.sort && !q.search) params.set("sort", q.sort || "date");
   if (q.user) params.set("user", q.user);
   if (q.subscribed) params.set("subscribed", "true");
   if (q.type) params.set("type", q.type);
-  if (q.search) params.set("search", q.search);
+  if (q.rating && q.rating !== "all") params.set("rating", q.rating);
+  // 关键词搜索必须走 /search 端点（type=videos + query），
+  // /videos?search= 的结果不相关（实测「奥黛塔」只返回无关内容）。
+  // 参考网页搜索：https://www.iwara.tv/search?type=videos&page=0&query=奥黛塔
+  if (q.search) {
+    params.set("type", q.type || "videos");
+    params.set("query", q.search);
+    const url = `https://${API_HOST}/search?${params.toString()}`;
+    console.log(`[iwara-api] listVideos(search): ${url}`);
+    const data = await fetchJson(url, { withAuth: false, retries: 2 });
+    return data; // { results:[Video], count, page, limit }
+  }
   const url = `https://${API_HOST}/videos?${params.toString()}`;
   console.log(`[iwara-api] listVideos: ${url}`);
   const data = await fetchJson(url, { withAuth: false, retries: 2 });

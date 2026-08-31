@@ -9,10 +9,14 @@ const fs = require("fs");
 const path = require("path");
 const urlMod = require("url");
 
+const os = require("os");
+
 const cfg = require("./config");
 const auth = require("./auth");
 const api = require("./lib/iwara-api");
 const downloader = require("./lib/downloader");
+const search = require("./lib/search-cache");
+const dataBackup = require("./lib/data-backup");
 
 const PUBLIC_DIR = path.join(__dirname, "public");
 const MIME = {
@@ -243,6 +247,7 @@ const server = http.createServer(async (req, res) => {
         limit: parseInt(parsed.query.limit || "20", 10),
         user: String(parsed.query.user || ""),
         search: String(parsed.query.search || ""),
+        rating: String(parsed.query.rating || "all"),
         subscribed: parsed.query.subscribed === "1"
       };
       try {
@@ -252,6 +257,85 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 200, { ok: false, error: String(e.message || e), hint: String(e.message || "").startsWith("CF_CHALLENGE") ? "Cookie 未通过 Cloudflare 挑战：请在设置中更新（需含 cf_clearance）" : "" });
       }
     }
+    // ---- 按时间搜索 / 搜索记录 ----
+    if (method === "POST" && pathname === "/api/search") {
+      const body = await readBody(req);
+      const startTs = Math.floor(new Date(body.startDate + "T00:00:00").getTime() / 1000);
+      const endTs = Math.floor(new Date(body.endDate + "T00:00:00").getTime() / 1000) + 86400;
+      if (isNaN(startTs) || isNaN(endTs)) return sendJson(res, 400, { ok: false, error: "日期格式无效" });
+      const contentFilter = Array.isArray(body.contentFilter) && body.contentFilter.length ? body.contentFilter : ["normal", "nsfw"];
+      try {
+        const t = await search.startSearchTask({
+          startDate: body.startDate,
+          endDate: body.endDate,
+          contentFilter,
+          startTs,
+          endTs,
+          user: String(body.user || ""),
+          search: String(body.search || body.query || "")
+        });
+        return sendJson(res, 200, { ok: true, started: true, task: t });
+      } catch (e) {
+        return sendJson(res, 400, { ok: false, error: e.message || String(e) });
+      }
+    }
+    if (method === "GET" && pathname === "/api/search-status") return sendJson(res, 200, { ok: true, task: search.getQueryTask() });
+    if (method === "POST" && pathname === "/api/search/stop") return sendJson(res, 200, search.stopSearch());
+    if (method === "GET" && pathname === "/api/search/cache") return sendJson(res, 200, { ok: true, cache: search.getCache() });
+    if (method === "POST" && pathname === "/api/search/clear") return sendJson(res, 200, search.clearCache());
+    if (method === "POST" && pathname === "/api/search/import") {
+      const body = await readBody(req);
+      let records = body && body.records;
+      if (typeof records === "string") {
+        try { records = JSON.parse(records); } catch (_) { return sendJson(res, 400, { ok: false, error: "JSON 解析失败，请上传正确的搜索记录数组" }); }
+      }
+      if (body && body.json && !records) {
+        try { records = JSON.parse(body.json); } catch (_) { return sendJson(res, 400, { ok: false, error: "JSON 解析失败，请上传正确的搜索记录数组" }); }
+      }
+      return sendJson(res, 200, search.importCache(records));
+    }
+    if (method === "POST" && pathname === "/api/search/save") {
+      const body = await readBody(req);
+      const results = Array.isArray(body && body.results) ? body.results : [];
+      return sendJson(res, 200, search.saveRecords(results));
+    }
+    if (method === "GET" && pathname === "/api/search/export") {
+      const cache = search.exportCache();
+      res.setHeader("Content-Type", "application/json");
+      res.setHeader("Content-Disposition", `attachment; filename="iwara-search-records-${new Date().toISOString().slice(0, 10)}.json"`);
+      return res.end(JSON.stringify(cache, null, 2));
+    }
+
+    // ---- 用户数据备份/恢复（按 userdata-manifest.json）----
+    if (method === "GET" && pathname === "/api/data/export") {
+      try {
+        const buf = await dataBackup.exportZip();
+        res.setHeader("Content-Type", "application/zip");
+        res.setHeader("Content-Disposition", `attachment; filename="iwara-userdata-${new Date().toISOString().slice(0, 10)}.zip"`);
+        return res.end(buf);
+      } catch (e) {
+        return sendJson(res, 500, { ok: false, error: "备份失败: " + (e && e.message || e) });
+      }
+    }
+    if (method === "POST" && pathname === "/api/data/import") {
+      const body = await readBody(req, 512 * 1024 * 1024);
+      const b64 = body && (body.data || body.zip);
+      if (!b64 || typeof b64 !== "string") return sendJson(res, 400, { ok: false, error: "缺少 zip 数据（data 字段，base64）" });
+      let zipBuf;
+      try { zipBuf = Buffer.from(b64, "base64"); }
+      catch (e) { return sendJson(res, 400, { ok: false, error: "zip 数据解码失败" }); }
+      const zipPath = path.join(os.tmpdir(), "iwara-upload-" + Date.now() + ".zip");
+      fs.writeFileSync(zipPath, zipBuf);
+      try {
+        const r = await dataBackup.importZip(zipPath);
+        return sendJson(res, 200, r);
+      } catch (e) {
+        return sendJson(res, 400, { ok: false, error: "导入失败: " + (e && e.message || e) });
+      } finally {
+        try { fs.unlinkSync(zipPath); } catch (_) {}
+      }
+    }
+
     // 解析单个视频（拿直链/文件名预览）
     if (method === "GET" && pathname === "/api/video-info") {
       const id = String(parsed.query.id || "").trim();
@@ -322,6 +406,7 @@ const server = http.createServer(async (req, res) => {
 
   auth.loadSessions();
   downloader.restorePendingTask();
+  search.restorePendingQuery();
 
   server.listen(finalPort, "0.0.0.0", () => {
     console.log("==============================================");

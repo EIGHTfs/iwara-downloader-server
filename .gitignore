@@ -1,29 +1,40 @@
-# ===== 用户数据与运行时文件（绝不提交）=====
-# 本地配置：含 iwaraToken / iwaraCookie / 密码哈希等敏感信息
+# 敏感/运行态数据
 server/config.json
-
-# 下载任务状态（含直链 URL）
+server/*.log
 server/download_task.json
-
-# 运行时日志与 PID
-server/server.log
+server/search_cache.json
+server/search_task.json
+server/cdn_hosts_state.json
 server/app.pid
+server/*.bak-*
 *.pid
 *.log
+*.bak
 
 # 下载的视频文件
 *.mp4
 *.webm
 *.mkv
 *.part
-xjnp/
 
-# ===== 环境与构建 =====
+# 本地 GitHub 推送凭据（仅本机，绝不上库）——由 scripts/git-push.sh 读取
+.git-push-token
+.git-credentials-local
+.github-credentials
+git_push_token.txt
+
+# 环境与构建
 node_modules/
 dist/
 build/
+release/
 
-# ===== 编辑器 / 系统 =====
+# 群晖 @eaDir 元数据
+@eaDir/
+**/@eaDir/
+*.@SynoEAStream
+
+# 编辑器 / 系统
 .DS_Store
 Thumbs.db
 .idea/

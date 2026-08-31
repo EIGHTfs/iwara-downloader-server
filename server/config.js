@@ -16,6 +16,8 @@ const DEFAULT_CONFIG = {
   port: 8643,
   // Iwara 登录 refresh_token（从浏览器 localStorage 的 token 复制）
   iwaraToken: "",
+  // 完整 Cookie（含 cf_clearance；可空，IP 直连 + 精简 UA 时 API 层通常不依赖）
+  iwaraCookie: "",
   // 下载后端：direct（Node 直连） | aria2
   downloadBackend: "direct",
   // 直连下载并发数
@@ -30,7 +32,7 @@ const DEFAULT_CONFIG = {
   //   例：Iwara_-_{TITLE}_[{ID}]_[{QUALITY}].mp4
   fileNameTemplate: "Iwara_-_{TITLE}_[{ID}]_[{QUALITY}].mp4",
   // 文件名模板占位（保留原始文件名，仅作者子目录）：<root>/<作者>/<原名>
-  useAuthorSubdir: true,
+  useAuthorSubdir: false,
   // 访问密码（scrypt 哈希，空 = 不设密码）
   passwordSalt: "",
   passwordHash: "",
