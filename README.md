@@ -71,7 +71,6 @@ node server/app.js --set-password "你的密码"
 ```
 ├── start.sh / stop.sh / restart.sh / status.sh
 ├── scripts/iwara-cred-fetch.user.js  # 油猴凭证采集 + 一键发送
-├── iwara-cred.bookmarklet.js         # 书签方案（手机无法跑油猴时）
 ├── userdata-manifest.json            # 用户数据文件清单（备份/恢复按此收集）
 ├── TROUBLESHOOTING.md                # 踩坑记录（UA / DNS / 链接过期）
 └── server/
@@ -144,8 +143,6 @@ node server/app.js --set-password "你的密码"
 1. 打开并登录 [iwara.tv](https://www.iwara.tv)（等 Cloudflare 挑战完成）
 2. 点页面右下角 🎫 按钮
 3. 一键复制完整 Cookie / Token，粘贴到网页「设置」保存
-
-手机无法跑油猴时，用 `iwara-cred.bookmarklet.js`（书签）。
 
 ---
 

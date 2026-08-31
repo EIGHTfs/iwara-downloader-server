@@ -182,19 +182,6 @@ const server = http.createServer(async (req, res) => {
       });
       return;
     }
-    // bookmarklet 源码（Edge 手机版免油猴方案，供 bookmarklet.html 加载）
-    if (method === "GET" && pathname === "/bookmarklet-src") {
-      const srcPath = path.join(PUBLIC_DIR, "..", "..", "iwara-cred.bookmarklet.js");
-      fs.readFile(srcPath, (err, data) => {
-        if (err) return sendJson(res, 404, { ok: false, error: "bookmarklet 不存在" });
-        res.writeHead(200, {
-          "Content-Type": "text/plain; charset=utf-8",
-          "Cache-Control": "no-store"
-        });
-        res.end(data);
-      });
-      return;
-    }
     if (method === "POST" && pathname === "/api/login") {
       const body = await readBody(req);
       const c = cfg.readConfig();

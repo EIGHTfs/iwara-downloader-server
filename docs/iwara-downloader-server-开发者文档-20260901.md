@@ -35,7 +35,6 @@ iwara-downloader-server/
 ├── userdata-manifest.json              # 用户数据清单（备份/恢复按此收集）
 ├── TROUBLESHOOTING.md                  # 踩坑：UA / IP 直连 / DNS / 链接过期 / aria2
 ├── docs/                               # 开发者文档（本文件）
-├── iwara-cred.bookmarklet.js           # 书签方案
 └── server/
     ├── app.js                          # HTTP 入口 + 全部 API 路由
     ├── auth.js                         # session / scrypt 密码
