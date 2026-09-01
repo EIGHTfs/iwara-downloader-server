@@ -7,7 +7,6 @@ const $ = (sel) => document.querySelector(sel);
 
 let settings = null;
 let searchResults = [];
-let kwResults = [];
 let followingLoaded = false;
 let taskPollTimer = null;
 let searchPollTimer = null;
@@ -285,8 +284,8 @@ function bindSearch() {
     $("#kwType").addEventListener("change", onKwTypeChange);
     onKwTypeChange();
   }
-  if ($("#filterNormal")) $("#filterNormal").addEventListener("change", () => { renderKwResults(); renderSearchResults(); });
-  if ($("#filterNsfw")) $("#filterNsfw").addEventListener("change", () => { renderKwResults(); renderSearchResults(); });
+  if ($("#filterNormal")) $("#filterNormal").addEventListener("change", () => { renderSearchResults(); });
+  if ($("#filterNsfw")) $("#filterNsfw").addEventListener("change", () => { renderSearchResults(); });
 
   $("#searchBtn").addEventListener("click", async () => {
     const startDate = $("#searchStart").value;
@@ -384,15 +383,6 @@ function bindSearch() {
   $("#selectNoneBtn").addEventListener("click", () => {
     document.querySelectorAll("#searchResultList input[type=checkbox]").forEach((c) => { c.checked = false; });
   });
-  $("#kwSelectAllBtn").addEventListener("click", () => bindSelectAll("#kwResultList", kwResults));
-  $("#kwSelectNoneBtn").addEventListener("click", () => {
-    document.querySelectorAll("#kwResultList input[type=checkbox]").forEach((c) => { c.checked = false; });
-  });
-  $("#kwClearBtn").addEventListener("click", () => {
-    kwResults = [];
-    renderKwResults();
-    setStatus($("#kwStatus"), "关键词列表已清空");
-  });
 
   $("#saveSearchBtn").addEventListener("click", async () => {
     try {
@@ -423,7 +413,6 @@ function bindSearch() {
     }
   }
   $("#downloadSelectedBtn").addEventListener("click", () => downloadFromList("#searchResultList", searchResults));
-  $("#kwDownloadSelectedBtn").addEventListener("click", () => downloadFromList("#kwResultList", kwResults));
 }
 
 function startSearchPoll() {
@@ -480,9 +469,9 @@ async function runUserVideos(username) {
     else if (!wantNormal && wantNsfw) qs.set("rating", "ecchi");
     const r = await api("/api/videos?" + qs.toString());
     if (!r.ok) throw new Error(r.error || "搜索失败");
-    kwResults = applyRatingFilter(r.results || []);
-    renderKwResults();
-    setStatus($("#kwStatus"), "@" + user + " 的视频（" + kwResults.length + " 条）", "ok");
+    searchResults = applyRatingFilter(r.results || []);
+    renderSearchResults();
+    setStatus($("#kwStatus"), "@" + user + " 的视频（" + searchResults.length + " 条）", "ok");
   } catch (e) {
     setStatus($("#kwStatus"), "失败：" + e.message, "err");
   }
@@ -509,9 +498,9 @@ async function runSearch() {
     const r = await api("/api/videos?" + qs.toString());
     if (!r.ok) throw new Error(r.error || "搜索失败");
     const rows = r.results || [];
-    kwResults = type === "users" ? rows.map(normalizeUserRow).filter(Boolean) : applyRatingFilter(rows);
-    renderKwResults();
-    setStatus($("#kwStatus"), "完成（" + kwResults.length + " 条）", "ok");
+    searchResults = type === "users" ? rows.map(normalizeUserRow).filter(Boolean) : applyRatingFilter(rows);
+    renderSearchResults();
+    setStatus($("#kwStatus"), "完成（" + searchResults.length + " 条）", "ok");
   } catch (e) {
     setStatus($("#kwStatus"), "失败：" + e.message, "err");
   }
@@ -586,9 +575,9 @@ function fillResultList(boxSel, countSel, list) {
   box.innerHTML = shown.map(resultItemHtml).join("");
 }
 
-function renderKwResults() {
-  fillResultList("#kwResultList", "#kwResultCount", kwResults);
-  const box = $("#kwResultList");
+function renderSearchResults() {
+  fillResultList("#searchResultList", "#resultCount", searchResults);
+  const box = $("#searchResultList");
   if (!box || box.dataset.userClickBound) return;
   box.dataset.userClickBound = "1";
   box.addEventListener("click", (e) => {
@@ -601,10 +590,6 @@ function renderKwResults() {
     onKwTypeChange();
     runUserVideos(username);
   });
-}
-
-function renderSearchResults() {
-  fillResultList("#searchResultList", "#resultCount", searchResults);
 }
 
 let followingUsers = [];

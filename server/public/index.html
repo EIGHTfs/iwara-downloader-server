@@ -101,7 +101,7 @@ try {
   <div class="tab-panel" id="panel-search">
     <div class="card">
       <h2>搜索视频</h2>
-      <p class="hint">关键词搜索对齐官网。默认视频：<code>/search?type=videos&amp;query=&amp;sort=date</code>。选作者：<code>/search?type=users&amp;query=&amp;sort=relevance</code>，此时才加载关注列表，并复用同一个关键词框。与按时间搜索互相独立。</p>
+      <p class="hint">关键词搜索对齐官网。默认视频：<code>/search?type=videos&amp;query=&amp;sort=date</code>。选作者：<code>/search?type=users&amp;query=&amp;sort=relevance</code>，此时才加载关注列表，并复用同一个关键词框。关键词与按时间搜索的结果都显示在下方「搜索结果」里。</p>
       <div class="row">
         <label><input type="checkbox" id="filterNormal" checked> 普通</label>
         <label><input type="checkbox" id="filterNsfw" checked> R18</label>
@@ -132,24 +132,14 @@ try {
       <div class="status" id="searchStatus"></div>
     </div>
     <div class="card">
-      <h2>关键词结果 <span id="kwResultCount" class="sub"></span></h2>
-      <div class="row" style="margin-bottom:8px">
-        <button class="primary" id="kwSelectAllBtn" type="button">全选</button>
-        <button class="ghost" id="kwSelectNoneBtn" type="button">全不选</button>
-        <button class="success" id="kwDownloadSelectedBtn" type="button">下载勾选项</button>
-        <button class="ghost" id="kwClearBtn" type="button">清空</button>
-      </div>
-      <div class="result-list" id="kwResultList"><div class="empty">尚未搜索</div></div>
-    </div>
-    <div class="card">
-      <h2>按时间结果 <span id="resultCount" class="sub"></span></h2>
+      <h2>搜索结果 <span id="resultCount" class="sub"></span></h2>
       <div class="row" style="margin-bottom:8px">
         <button class="primary" id="selectAllBtn" type="button" title="只勾选符合上方「普通/R18 筛选」的结果">全选</button>
         <button class="ghost" id="selectNoneBtn" type="button">全不选</button>
         <button class="success" id="downloadSelectedBtn" type="button">下载勾选项</button>
-        <button class="ghost" id="saveSearchBtn" type="button" title="把当前按时间结果覆盖写入 search_cache.json">保存</button>
+        <button class="ghost" id="saveSearchBtn" type="button" title="把当前搜索结果覆盖写入 search_cache.json">保存</button>
         <button class="ghost" id="clearSearchBtn" type="button">清空列表</button>
-        <button class="ghost" id="exportSearchBtn" type="button" title="导出当前按时间搜索记录为 JSON 文件">导出记录</button>
+        <button class="ghost" id="exportSearchBtn" type="button" title="导出当前搜索结果记录为 JSON 文件">导出记录</button>
         <button class="ghost" id="importSearchBtn" type="button" title="上传 JSON 文件导入搜索记录（按 id 合并）">导入记录</button>
         <input type="file" id="importSearchFile" accept=".json,application/json" style="display:none">
       </div>
