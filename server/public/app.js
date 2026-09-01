@@ -38,6 +38,22 @@ function setStatus(el, msg, type) {
   el.className = type && type !== "status" ? "status " + type : "status";
 }
 
+// 2026-09-01 悬浮提示（右下角 toast，自动淡出；保存设置等操作反馈用）
+let _toastTimer = null;
+function showToast(msg, type) {
+  let el = $("#gbmdToast");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "gbmdToast";
+    el.className = "gbmd-toast";
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.className = "gbmd-toast " + (type === "err" ? "err" : "ok") + " show";
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => { el.classList.remove("show"); }, 3200);
+}
+
 function fmtSize(b) {
   if (!b) return "";
   const u = ["B", "KB", "MB", "GB"];
@@ -87,6 +103,9 @@ function bindTabs() {
       tab.classList.add("active");
       $("#panel-" + tab.dataset.tab).classList.add("active");
       try { history.replaceState(null, "", "#" + tab.dataset.tab); } catch (_) {}
+      // 2026-09-01 保存设置悬浮按钮：仅设置页显示
+      const fab = $("#saveSettingsFab");
+      if (fab) fab.classList.toggle("show", tab.dataset.tab === "settings");
     });
   });
   window.addEventListener("hashchange", () => {
@@ -756,8 +775,9 @@ function bindBrowse() {
 }
 
 function bindSettings() {
-  $("#saveSettingsBtn").addEventListener("click", async () => {
-    setStatus($("#settingsStatus"), "保存中…");
+  // 2026-09-01 保存设置改悬浮按钮（右下角 💾，仅设置页显示；反馈改 toast）
+  const saveFab = $("#saveSettingsFab");
+  if (saveFab) saveFab.addEventListener("click", async () => {
     try {
       const body = {
         downloadPath: $("#set-downloadPath").value.trim(),
@@ -785,10 +805,13 @@ function bindSettings() {
       }
       fillSettings(r.settings);
       setStatus($("#settingsStatus"), "已保存凭证与设置", "ok");
+      // 2026-09-01 保存反馈改悬浮窗
+      showToast("✅ 已保存设置", "ok");
       if (kwType() === "users") loadFollowingUsers();
       refreshIwaraBadge();
     } catch (e) {
       setStatus($("#settingsStatus"), e.message, "err");
+      showToast("❌ 保存失败：" + e.message, "err");
     }
   });
   $("#changePwdBtn").addEventListener("click", async () => {

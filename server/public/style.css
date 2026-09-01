@@ -336,3 +336,29 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary); o
 }
 .combo-item:hover, .combo-item.hover { background: var(--primary); color: #fff; }
 .combo-empty { padding: 8px 10px; font-size: 12px; color: var(--muted); }
+
+/* 2026-09-01 悬浮提示（保存设置等操作反馈；右下角，自动淡出） */
+.gbmd-toast {
+  position: fixed; right: 20px; bottom: 90px; z-index: 2147483000;
+  max-width: 72vw; padding: 10px 18px; border-radius: 10px;
+  font-size: 14px; line-height: 1.5; color: #fff;
+  box-shadow: 0 6px 24px rgba(0,0,0,.25);
+  opacity: 0; transform: translateY(10px); pointer-events: none;
+  transition: opacity .25s ease, transform .25s ease;
+}
+.gbmd-toast.show { opacity: 1; transform: translateY(0); }
+.gbmd-toast.ok { background: #1a9d4b; }
+.gbmd-toast.err { background: #d0392f; }
+@media (max-width: 768px) { .gbmd-toast { left: 14px; right: 14px; bottom: 70px; max-width: none; text-align: center; } }
+
+/* 2026-09-01 保存设置悬浮按钮（右下角，仅设置页显示） */
+#saveSettingsFab {
+  position: fixed; right: 20px; bottom: 20px; z-index: 2147482990;
+  width: 56px; height: 56px; border-radius: 50%; border: none; cursor: pointer;
+  background: var(--primary); color: #fff; font-size: 22px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.3);
+  display: none; align-items: center; justify-content: center;
+  transition: transform .15s ease, background .15s ease;
+}
+#saveSettingsFab:hover { transform: translateY(-2px) scale(1.05); }
+#saveSettingsFab.show { display: flex; }
