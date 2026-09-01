@@ -10,6 +10,7 @@ const path = require("path");
 const urlMod = require("url");
 
 const os = require("os");
+const dns = require("dns").promises;
 
 const cfg = require("./config");
 const auth = require("./auth");
@@ -142,6 +143,37 @@ function publicSettings(c) {
   });
 }
 
+// 判断 aria2 是否与服务器同一台设备：取 aria2Path 主机名，与回环/本机网卡 IP/本机主机名比对
+async function aria2SameDevice(aria2Path) {
+  const raw = String(aria2Path || "").trim();
+  if (!raw) return null;
+  let host;
+  try { host = new URL(raw).hostname.toLowerCase(); } catch (_) { return null; }
+  if (!host) return null;
+  host = host.replace(/^\[|\]$/g, ""); // 去掉 IPv6 括号
+  const hostname = String(os.hostname()).toLowerCase();
+  // 回环 or 本机主机名 → 同机
+  if (host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "0.0.0.0" || host === hostname) return true;
+  // 本机网卡 IP 集合
+  const localIps = new Set();
+  for (const addrs of Object.values(os.networkInterfaces())) {
+    for (const a of addrs || []) {
+      if (a && a.address) localIps.add(String(a.address).toLowerCase().replace(/^\[|\]$/g, ""));
+    }
+  }
+  if (localIps.has(host)) return true;
+  // dns 解析主机名 → IP，落在本机网卡 → 同机
+  try {
+    const res = await dns.lookup(host, { all: true });
+    const ips = Array.isArray(res) ? res.map((r) => String(r.address).toLowerCase().replace(/^\[|\]$/g, "")) : [host];
+    if (ips.some((ip) => localIps.has(ip))) return true;
+    // 解析失败或所有解析结果都不在本机 → 跨设备（能解析出来才算数）
+    return ips.length ? false : null;
+  } catch (_) {
+    return null; // 解析不出来（如 sa6400.local 本机无记录）→ 无法判断
+  }
+}
+
 function serveStatic(req, res, pathname) {
   let filePath = path.join(PUBLIC_DIR, pathname === "/" ? "index.html" : pathname);
   if (!filePath.startsWith(PUBLIC_DIR)) { res.writeHead(403); res.end("Forbidden"); return; }
@@ -264,6 +296,13 @@ const server = http.createServer(async (req, res) => {
     }
 
     // ---- 设置 ----
+    if (method === "GET" && pathname === "/api/aria2-device") {
+      const c = cfg.readConfig();
+      // 优先用 query.path（设置页还没保存时看输入框里的值），否则用配置里的 aria2Path
+      const pathStr = parsed.query.path !== undefined ? String(parsed.query.path) : c.aria2Path;
+      const same = await aria2SameDevice(pathStr);
+      return sendJson(res, 200, { ok: true, same, path: pathStr || "" });
+    }
     if (method === "GET" && pathname === "/api/settings") {
       return sendJson(res, 200, { ok: true, settings: publicSettings(cfg.readConfig()) });
     }

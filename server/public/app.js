@@ -692,6 +692,24 @@ function bindLogout() {
   });
 }
 
+// 2026-09-01 aria2 与服务器是否同机（调用 /api/aria2-device，徽标显示）
+async function checkAria2Device(pathStr) {
+  const badge = $("#aria2SameBadge");
+  if (!badge) return;
+  const p = String(pathStr || "").trim();
+  if (!p) { badge.style.display = "none"; badge.textContent = ""; return; }
+  try {
+    const r = await api("/api/aria2-device?path=" + encodeURIComponent(p));
+    badge.style.display = "";
+    if (r && r.same === true) { badge.textContent = "同一设备"; badge.className = "badge normal"; }
+    else if (r && r.same === false) { badge.textContent = "跨设备"; badge.className = "badge nsfw"; }
+    else { badge.textContent = "无法判断"; badge.className = "badge"; }
+  } catch (_) {
+    badge.style.display = "";
+    badge.textContent = "判断失败"; badge.className = "badge nsfw";
+  }
+}
+
 function fillSettings(s) {
   settings = s || {};
   $("#set-downloadPath").value = settings.downloadPath || "";
@@ -707,6 +725,7 @@ function fillSettings(s) {
   if (!$("#set-aria2Token").value) {
     $("#set-aria2Token").placeholder = settings.hasAria2Token ? "已保存则留空不改" : "RPC 密钥";
   }
+  checkAria2Device($("#set-aria2Path").value);
   $("#set-iwaraCfgIp").value = settings.iwaraCfgIp || "104.26.12.12";
   $("#set-aria2Dns").value = settings.aria2Dns || "";
   // Cookie 框只在空着时回填一次：保存后不要把旧值盖回刚贴进去的新凭证
@@ -760,6 +779,12 @@ function bindBrowse() {
 }
 
 function bindSettings() {
+  // 2026-09-01 aria2 同机判断：输入框改动后即时刷新徽标
+  const aria2Input = $("#set-aria2Path");
+  if (aria2Input) {
+    aria2Input.addEventListener("blur", () => checkAria2Device(aria2Input.value));
+    aria2Input.addEventListener("input", () => checkAria2Device(aria2Input.value));
+  }
   // 2026-09-01 保存设置改悬浮按钮（右下角 💾，仅设置页显示；反馈改 toast）
   const saveFab = $("#saveSettingsFab");
   if (saveFab) saveFab.addEventListener("click", async () => {
