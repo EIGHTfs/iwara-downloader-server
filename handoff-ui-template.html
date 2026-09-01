@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>转达：iwara 网页前端怎么改（给写模板的 AI）</title>
+<style>
+:root { --bg:#f4f6f9; --card:#fff; --text:#1c2430; --muted:#5a6472; --line:#e6ebf2; --code:#f0f3f8; --accent:#2f6fed; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg:#12161c; --card:#1b212b; --text:#e8edf4; --muted:#9aa6b4; --line:#2a3340; --code:#10151c; --accent:#7aa2ff; }
+}
+body { margin:0; font:16px/1.65 system-ui,-apple-system,"Microsoft YaHei",sans-serif; background:var(--bg); color:var(--text); }
+main { max-width:920px; margin:0 auto; padding:28px 20px 80px; }
+h1 { font-size:26px; margin:0 0 8px; }
+h2 { font-size:20px; margin:28px 0 10px; padding-top:8px; border-top:1px solid var(--line); }
+p, li { color:var(--text); }
+.lead { color:var(--muted); margin:0 0 20px; }
+pre, code { font-family: ui-monospace, Consolas, monospace; }
+pre { background:var(--code); border:1px solid var(--line); border-radius:10px; padding:12px 14px; overflow:auto; font-size:13px; line-height:1.5; }
+code { background:var(--code); padding:1px 5px; border-radius:4px; }
+table { border-collapse:collapse; width:100%; font-size:14px; }
+th, td { border:1px solid var(--line); padding:8px 10px; text-align:left; vertical-align:top; }
+th { background:var(--code); }
+.card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px 18px; margin:16px 0; }
+.copy { position:sticky; top:0; z-index:2; background:var(--bg); padding:10px 0 12px; }
+button { background:var(--accent); color:#fff; border:none; border-radius:8px; padding:8px 14px; cursor:pointer; font-size:14px; }
+</style>
+</head>
+<body>
+<main>
+<div class="copy"><button type="button" id="copyAll">复制全文</button> <span id="copied" style="color:var(--muted);font-size:13px"></span></div>
+<article id="doc">
+
+<h1>从第三步起改网页前端（给写模板的 AI）</h1>
+<p class="lead">直接按下面改。骨架 ID 不要动：<code>#kwInput</code> <code>#searchUser</code> <code>#kwUserInput</code> <code>#set-iwaraCookie</code> <code>.result-list</code> <code>#tabs</code> <code>#themeBtn</code> <code>#logoutBtn</code> <code>#serverTime</code> <code>#noPwdWarn</code>。主题键仍是 <code>gbmd-theme</code>。</p>
+
+<h2>3. 顶栏登录徽标</h2>
+<p>在 <code>#serverTime</code> 左边加 <code>#iwaraUserBadge</code>（模板里的 <code>#gbUserBadge</code> 换成这个名字）：</p>
+<pre><code>&lt;span id="iwaraUserBadge" class="sub"&gt;&lt;/span&gt;
+&lt;span id="serverTime" class="sub"&gt;&lt;/span&gt;</code></pre>
+<p>进页、保存设置、点「检测登录状态」都请求：</p>
+<pre><code>GET /api/account-check</code></pre>
+<p>不要回传 Cookie/Token 明文。前端只用：</p>
+<ul>
+<li><code>loggedIn</code> <code>username</code> <code>userId</code> <code>cookieSet</code></li>
+<li><code>warnLevel</code>：<code>ok</code> / <code>warn</code> / <code>expired</code></li>
+<li><code>remainingDays</code> <code>expiresAt</code> <code>cfChallenge</code> <code>error</code></li>
+<li><code>cred</code>：<code>hasCookie</code> <code>cookieChars</code> <code>cookieItems</code> <code>hasCfClearance</code> <code>hasToken</code> <code>hasAccessToken</code></li>
+</ul>
+<p><strong>到期看 refresh_token，不要看 access_token</strong>（access 大约 1 小时）。</p>
+<table>
+<thead><tr><th>条件</th><th>顶栏文字</th><th>class</th></tr></thead>
+<tbody>
+<tr><td>未配置凭证</td><td>未配置凭证</td><td><code>iwara-user-err</code></td></tr>
+<tr><td>过期 / 未登录</td><td>❌ 已过期 · … 或 ❌ 错误信息</td><td><code>iwara-user-err</code></td></tr>
+<tr><td>剩 ≤ 7 天</td><td>⚠️ 用户名 · 剩 N 天</td><td><code>iwara-user-warn</code></td></tr>
+<tr><td>正常</td><td>👤 用户名 · 剩 N 天</td><td><code>iwara-user-ok</code></td></tr>
+</tbody>
+</table>
+<p>CSS 给徽章加圆角底；夜间模式的黄/红底单独写，别和白天共用浅色。</p>
+<p>进页调一次 <code>refreshIwaraBadge()</code> → <code>GET /api/account-check</code> → 更新徽章。</p>
+
+<h2>4. 设置页「检测登录状态」做成多行块</h2>
+<p>不要用一行 <code>span</code>。改成：</p>
+<pre><code>&lt;button id="gbLoginCheckBtn" type="button"&gt;检测登录状态&lt;/button&gt;
+&lt;pre id="gbLoginStatus" class="login-detect"&gt;&lt;/pre&gt;</code></pre>
+<p>按钮 id 可以继续叫 <code>gbLoginCheckBtn</code>，点了同样打 <code>GET /api/account-check</code>，把返回填进 <code>&lt;pre&gt;</code>，格式如下（和油猴面板同一套）：</p>
+<pre><code>✅ 已登录（剩 29 天）
+👤 用户名: fluquormyosotis
+🆔 用户 id: c1d1cf1f-...
+🔗 https://www.iwara.tv/profile/fluquormyosotis
+───
+完整 Cookie: 127 字符 / 2 项 ｜ 存于服务器（不回传明文）
+含 cf_clearance: ✅ 有 / ❌ 无
+refresh_token: ✅ 有
+access_token: ✅ 有</code></pre>
+<p>未登录 / 缺凭证 / CF 挑战：第一行用 ❌，并带上 <code>error</code>。<br>
+<code>.login-detect</code>：等宽、<code>white-space: pre-wrap</code>、绿/黄/红底。<code>ok</code> / <code>warn</code> / <code>err</code> 三个状态 class。</p>
+<p>凭证框 <code>#set-iwaraCookie</code>：</p>
+<ul>
+<li>GET 设置必须脱敏，空字符串 <strong>不要覆盖</strong> 已存 Cookie</li>
+<li>placeholder：「已保存则留空不改」</li>
+<li>允许粘贴组合文本，服务端自己拆：</li>
+</ul>
+<pre><code>Cookie=...
+Token=...
+AccessToken=...</code></pre>
+<p><code>POST /api/settings</code> 解析这三行后写入。设置页提示：油猴脚本见页头「油猴脚本」。</p>
+
+<h2>5. 网页和油猴怎么分工</h2>
+<p>网页只做三件事：展示服务器账号、给安装入口、收粘贴凭证。</p>
+<p>油猴侧约定（网页不要做成相反的）：</p>
+<ul>
+<li>点右下角图标立刻弹出，打开面板 / 发送视频 <strong>不读 Cookie</strong></li>
+<li>用 <code>GET /api/account-check</code> 当「服务器在线 + 账号信息」</li>
+<li>服务器已登录：面板只留发送，不展示本机 Cookie/Token</li>
+<li>服务器没凭证：才 <code>GM_cookie</code>，再 <code>POST /api/settings</code> 回传</li>
+<li>发送：<code>POST /api/receive { url }</code>，服务端规整后走同一套 <code>POST /api/download</code></li>
+<li>用 <strong>项目访问密码</strong> 自动 <code>POST /api/login</code>，不要另做 send-token</li>
+<li><strong>不要书签脚本</strong>，不要 <code>/bookmarklet</code></li>
+</ul>
+<p>页头安装按钮：</p>
+<pre><code>&lt;a class="ghost" href="/iwara-cred-fetch.user.js" id="btn-userscript"&gt;📥 油猴脚本&lt;/a&gt;</code></pre>
+<p>服务端输出该文件时：</p>
+<ul>
+<li><code>Content-Type: text/javascript; charset=utf-8</code></li>
+<li><code>Content-Disposition: inline; filename=iwara-cred-fetch.user.js</code></li>
+<li><code>Cache-Control: no-store</code></li>
+</ul>
+
+<h2>6. 图标静态文件</h2>
+<p>用户要 Iwara 官方图标，不要模板自带的香蕉/默认 logo。</p>
+<table>
+<thead><tr><th>文件</th><th>用途</th></tr></thead>
+<tbody>
+<tr><td><code>iwara-logo.png</code></td><td>顶栏、登录页、apple-touch（官方 540×540）</td></tr>
+<tr><td><code>favicon.png</code></td><td>PNG favicon（64×64）</td></tr>
+<tr><td><code>favicon.ico</code></td><td>标签页默认请求，必须 200</td></tr>
+<tr><td><code>/iwara-cred-fetch.user.js</code></td><td>油猴安装</td></tr>
+</tbody>
+</table>
+<p><code>index.html</code> / <code>login.html</code> 的 <code>&lt;head&gt;</code>：</p>
+<pre><code>&lt;link rel="icon" href="/favicon.ico" sizes="any"&gt;
+&lt;link rel="icon" type="image/png" href="/favicon.png?v=2"&gt;
+&lt;link rel="apple-touch-icon" href="/iwara-logo.png?v=2"&gt;</code></pre>
+<p>标题旁：</p>
+<pre><code>&lt;h1&gt;&lt;img src="iwara-logo.png" alt="Iwara" class="brand-logo"&gt; iwara&lt;/h1&gt;</code></pre>
+<p><code>.brand-logo</code>：28px（登录页 36px）、圆角、<code>object-fit: contain</code>。<br>
+<code>favicon.ico</code> 没有的话 Chrome 标签页不会更新。html/js/css 继续 <code>no-store</code>。</p>
+<p>改完硬刷新验证：标签页图标、顶栏徽章、设置页多行登录块、「油猴脚本」能直接安装。</p>
+
+</article>
+</main>
+<script>
+document.getElementById("copyAll").onclick = async () => {
+  const t = document.getElementById("doc").innerText;
+  try {
+    await navigator.clipboard.writeText(t);
+    document.getElementById("copied").textContent = "已复制";
+  } catch (e) {
+    document.getElementById("copied").textContent = "复制失败，请手动全选";
+  }
+};
+</script>
+</body>
+</html>
