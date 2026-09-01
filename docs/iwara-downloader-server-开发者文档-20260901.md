@@ -100,6 +100,7 @@ cd /path/to/iwara-downloader-server
 | POST | `/api/change-password` | 是 | 设密码（≥4 位） |
 | POST | `/api/token` | 是 | 单独保存 iwaraToken |
 | GET | `/api/account-check` | 是 | 账号/登录态检测（油猴+设置页） |
+| GET | `/api/cred` | 是 | 明文回传 iwaraCookie/Token/AccessToken（油猴「注入登录态」用，明文直传） |
 | GET | `/api/following` | 是 | 关注用户列表（增量同步） |
 | GET | `/api/videos` | 否 | 视频列表（关键词走 `/search?query=`；登录后结果含 liked） |
 | POST | `/api/search` | 是 | 按时间后台翻页 |

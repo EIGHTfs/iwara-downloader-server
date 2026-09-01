@@ -341,6 +341,17 @@ const server = http.createServer(async (req, res) => {
       const r = await api.checkLogin();
       return sendJson(res, 200, Object.assign({ cookieSet: !!(c.iwaraCookie || c.iwaraToken), checked: true, cred }, r));
     }
+
+    // ---- 明文凭证回传（油猴「注入登录态到浏览器」用；明文直传，需登录，仅局域网场景）----
+    if (method === "GET" && pathname === "/api/cred") {
+      const c = cfg.readConfig();
+      return sendJson(res, 200, {
+        ok: true,
+        cookie: String(c.iwaraCookie || ""),
+        token: String(c.iwaraToken || ""),
+        accessToken: String(c.iwaraAccessToken || "")
+      });
+    }
     if (method === "GET" && pathname === "/api/following") {
       try {
         const all = parsed.query.all === "1";

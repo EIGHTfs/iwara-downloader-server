@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Iwara 下载助手（Cookie + 一键发送到服务器）
 // @namespace    iwara-cred
-// @version      7.4.3
+// @version      7.5.0
 // @description  SPA 换页不重载；服务器地址 GM+localStorage 双写，打开必回填。
 // @author       fnOS
 // @match        https://www.iwara.tv/*
@@ -12,6 +12,7 @@
 // @grant        GM_setValue
 // @grant        GM_notification
 // @grant        GM_cookie.list
+// @grant        GM_cookie.set
 // @grant        GM_xmlhttpRequest
 // @connect      *
 // @run-at       document-start
@@ -39,7 +40,7 @@
 (function () {
     "use strict";
 
-    const VER = "7.4.3";
+    const VER = "7.5.0";
     const ACCOUNT_TTL_MS = 5 * 60 * 1000; // 换页不重复打 /api/account-check
     const SRV_SESSION_KEY = "iwcred_server_session";
     const IWARA_ICON = "data:image/png;base64,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";
@@ -465,6 +466,7 @@
   </div>
   <div id="iwcred-srv-actions">
     <button id="iwcred-save">💾 记住地址</button>
+    <button id="iwcred-inject">🔄 注入登录态到浏览器</button>
   </div>
   <div id="iwcred-srv-status"></div>
   <div id="iwcred-local">
@@ -498,6 +500,7 @@
                 panelEl.querySelector("#iwcred-refresh-cred").addEventListener("click", () => syncFromServer(true));
                 panelEl.querySelector("#iwcred-send").addEventListener("click", srvSendFlow);
                 panelEl.querySelector("#iwcred-save").addEventListener("click", srvSaveFlow);
+                panelEl.querySelector("#iwcred-inject").addEventListener("click", srvInjectFlow);
                 panelEl.querySelector("#iwcred-server").addEventListener("keydown", (e) => { if (e.key === "Enter") srvSendFlow(); });
                 panelEl.querySelector("#iwcred-server-pwd").addEventListener("keydown", (e) => { if (e.key === "Enter") srvSendFlow(); });
             }
@@ -802,6 +805,73 @@
         srvSetStatus(`已记住：${base}${hasPwd ? "（含密码）" : ""}`, "ok");
         showToast("已记住服务器地址");
         log("saved server", base);
+    }
+
+    /** 从服务器拉明文凭证（GET /api/cred，需登录会话）。 */
+    async function fetchServerCreds(base, session) {
+        const r = await gmRequest("GET", base + "/api/cred", undefined, 12000, sessionHeaders(session));
+        if (!r.ok || !r.json || !r.json.ok) return { ok: false, error: (r.json && r.json.error) || r.error || ("HTTP " + r.status) };
+        return { ok: true, cred: r.json };
+    }
+
+    /** 把 Cookie 项逐个写进当前域（document.cookie；HttpOnly 项 GM_cookie.set 兜底）。 */
+    function applyCookieToBrowser(cookieText) {
+        const items = String(cookieText || "").split(";").map((s) => s.trim()).filter((p) => p && !/^=/.test(p) && !/deleted/i.test(p));
+        let written = 0;
+        for (const item of items) {
+            const eq = item.indexOf("=");
+            if (eq <= 0) continue;
+            const name = item.slice(0, eq).trim();
+            const value = item.slice(eq + 1).trim();
+            if (!name || !value) continue;
+            try { document.cookie = name + "=" + value + "; path=/"; written++; } catch (_) {}
+            // HttpOnly（如 cf_clearance）document.cookie 写不进，用 GM_cookie.set 兜底
+            if (typeof GM_cookie !== "undefined" && GM_cookie && typeof GM_cookie.set === "function") {
+                try {
+                    GM_cookie.set({ url: location.origin + "/", name, value, path: "/" }, () => {});
+                } catch (_) {}
+            }
+        }
+        return written;
+    }
+
+    /** 注入主流程：GET /api/cred → 写 cookie + localStorage，提示刷新。 */
+    async function srvInjectFlow() {
+        if (!ensureUi()) return;
+        const inp = srvInput();
+        const base = normalizeServerBase((inp && inp.value.trim()) || storeGet(SRV_KEY) || "");
+        if (!base) { srvSetStatus("没有服务器地址：先填写并记住地址", "err"); return; }
+        if (inp) inp.value = base;
+        const btn = panelEl.querySelector("#iwcred-inject");
+        if (btn) btn.disabled = true;
+        try {
+            srvSetStatus("正在连接服务器…", "info");
+            const sess = await ensureServerSession(base);
+            if (!sess.ok) { srvSetStatus(sess.error, "err"); return; }
+            srvSetStatus("正在读取服务器凭证…", "info");
+            const got = await fetchServerCreds(sess.base, sess.session);
+            if (!got.ok) { srvSetStatus("读取凭证失败：" + got.error, "err"); return; }
+            const cred = got.cred || {};
+            const n = applyCookieToBrowser(cred.cookie);
+            if (cred.token) { try { localStorage.setItem("token", cred.token); } catch (_) {} }
+            if (cred.accessToken) { try { localStorage.setItem("accessToken", cred.accessToken); } catch (_) {} }
+            const hasCf = /(?:^|;\s*)cf_clearance=/i.test(String(cred.cookie || ""));
+            const log = [];
+            log.push(`已写入 ${n} 个 Cookie 项` + (hasCf ? "（含 cf_clearance）" : ""));
+            if (cred.token) log.push("refresh_token 已注入");
+            if (cred.accessToken) log.push("access_token 已注入");
+            const ok = n > 0 || cred.token || cred.accessToken;
+            if (ok) {
+                srvSetStatus("✅ " + log.join("；") + " —— 请刷新页面生效", "ok");
+                showToast("✅ 登录态已注入，请刷新页面");
+            } else {
+                srvSetStatus("服务器没有可注入的凭证（Cookie/Token 都为空）", "err");
+            }
+        } catch (e) {
+            srvSetStatus("注入失败：" + (e && e.message || e), "err");
+        } finally {
+            if (btn) btn.disabled = false;
+        }
     }
 
     /** 监听 SPA 路由：只把 UI 挂回去，不重建、不重拉账号。 */
