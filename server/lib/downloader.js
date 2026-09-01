@@ -19,6 +19,7 @@ const os = require("os");
 const cfg = require("../config");
 const api = require("./iwara-api");
 const videoIndex = require("./video-index");
+const deviceCheck = require("./device-check");
 
 const DATA_DIR = process.env.GBMD_DATA_DIR || __dirname;
 const TASK_FILE = path.join(DATA_DIR, "..", "download_task.json");
@@ -340,14 +341,20 @@ function aria2Rpc(method, params) {
   });
 }
 
-function aria2DirOptions(c, outName) {
+/**
+ * aria2 addUri 基础 options。
+ * @param {boolean} [includeDir] 是否传 dir（= 设置里 downloadPath）。
+ *   仅当 aria2 与服务器同一台设备时为 true；跨设备不传，aria2 用默认目录。
+ *   缺省 true（保留旧行为），调用方按同机判断显式传入。
+ */
+function aria2DirOptions(c, outName, includeDir = true) {
   const options = {
     out: sanitizeFileName(outName),
     "continue": "true",
     "allow-overwrite": "true",
     "auto-file-renaming": "false"
   };
-  if (c.downloadPath && c.downloadPath.trim()) options["dir"] = c.downloadPath.trim();
+  if (includeDir && c.downloadPath && c.downloadPath.trim()) options["dir"] = c.downloadPath.trim();
   return options;
 }
 
@@ -371,7 +378,7 @@ async function aria2AddIndexJson(outName, id, entry) {
   const port = c.port || 28463;
   const host = process.env.IWARA_PUBLIC_HOST || lanIPv4() || "127.0.0.1";
   const url = "http://" + host + ":" + port + "/api/index-sidecar?id=" + encodeURIComponent(id) + "&k=" + encodeURIComponent(videoIndex.sidecarKey(id));
-  const options = aria2DirOptions(c, outName);
+  const options = aria2DirOptions(c, outName, await deviceCheck.aria2SameDevice(c.aria2Path) === true);
   options["max-connection-per-server"] = "1";
   console.log("[downloader] 索引 JSON → aria2", url, "→", outName);
   return aria2Rpc("aria2.addUri", [[url], options]);
@@ -473,7 +480,7 @@ function findExistingVideoFile(root, id) {
 /** aria2 后端：addUri 推送（支持 http/https；DSM 自签名证书忽略校验） */
 async function aria2Add(item) {
   const c = cfg.readConfig();
-  const options = aria2DirOptions(c, item.file);
+  const options = aria2DirOptions(c, item.file, await deviceCheck.aria2SameDevice(c.aria2Path) === true);
   options["max-connection-per-server"] = "4";
   options.split = "4";
   options["allow-overwrite"] = "false";
