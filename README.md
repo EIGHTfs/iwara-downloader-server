@@ -15,7 +15,7 @@
 | 🔄 CDN 子域轮换 | 失败自动换可用子域；成功/失败列表持久化到本机 |
 | 📁 文件名模板 | 学油猴脚本变量替换：`Iwara_-_{TITLE}_[{ID}]_[{QUALITY}]`（不要写 `.mp4`，落盘自动补） |
 | 🚀 双下载后端 | `direct`（Node 直连，断点续传）/ `aria2`（JSON-RPC 推送） |
-| 📦 启停脚本 | `start.sh` / `stop.sh` / `restart.sh` / `status.sh` |
+| 📦 启停脚本 | 单脚本子命令 `start.sh [start|stop|restart|status]` + 兼容薄壳 + macOS/Windows 版 |
 
 ---
 
@@ -34,7 +34,7 @@ cp server/config.example.json server/config.json
 # 3. （可选）设置访问密码
 node server/app.js --set-password "你的密码"
 
-# 4. 启动
+# 4. 启动（无参默认 restart；未运行会直接启动）
 ./start.sh
 # 浏览器打开 http://127.0.0.1:8643
 ```
@@ -42,14 +42,20 @@ node server/app.js --set-password "你的密码"
 > 未设置密码时**只警告、可直接使用**（局域网内任何人可访问，建议尽快设置）。
 > 首次启动若没有 `config.json`，会按 `config.js` 的默认值运行；正式使用请从 example 复制后再填路径与凭证。
 
-**启停**
+**启停（Linux/群晖 用 `start.sh`，macOS 用 `start-macos.sh`，Windows 用 `start-windows.bat`）**
 
-| 脚本 | 作用 |
+| 命令 | 作用 |
 |---|---|
-| `./start.sh` | 启动 |
-| `./stop.sh` | 停止 |
-| `./restart.sh` | 重启 |
-| `./status.sh` | 状态 |
+| `./start.sh` | 重启（默认命令，等价 restart；未运行则直接启动） |
+| `./start.sh start [--port 8643]` | 启动（`--port` 优先，缺省读 config.json 的 `port`，再缺省 8643） |
+| `./start.sh restart [--port 8643]` | 重启（stop + sleep 1 + start） |
+| `./start.sh stop` | 停止（PID 优雅停止 → 兜底清理残留进程） |
+| `./start.sh status` | 状态（进程 / PID 文件 / HTTP 健康检查 / 日志） |
+| `./start.sh --port 8643` | 兼容旧用法（等价 restart） |
+| `./start.sh --set-password "新密码"` | 设置访问密码（不启动服务） |
+
+> 旧脚本名 `stop.sh` / `restart.sh` / `status.sh` 保留为薄壳，转发到 `start.sh`，旧习惯/文档引用不受影响。
+> `start-windows-background.bat` 是 Windows 入口薄壳，行为与 `start-windows.bat` 一致。
 
 ---
 
@@ -69,7 +75,8 @@ node server/app.js --set-password "你的密码"
 ## 目录结构
 
 ```
-├── start.sh / stop.sh / restart.sh / status.sh
+├── start.sh / start-macos.sh / start-windows.bat / start-windows-background.bat  # 启停脚本（单脚本子命令）
+├── stop.sh / restart.sh / status.sh    # 兼容薄壳 → start.sh
 ├── scripts/iwara-cred-fetch.user.js  # 油猴凭证采集 + 一键发送
 ├── userdata-manifest.json            # 用户数据文件清单（备份/恢复按此收集）
 ├── TROUBLESHOOTING.md                # 踩坑记录（UA / DNS / 链接过期）

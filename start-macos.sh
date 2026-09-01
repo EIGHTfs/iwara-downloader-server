@@ -1,45 +1,39 @@
 #!/usr/bin/env bash
 # ============================================================
-# iwara-downloader-server 启动脚本（单脚本，对照 gbmd start-linux.sh）
+# iwara-downloader-server macOS 启动脚本（与 start.sh 同构，对照 gbmd start-macos.sh）
 # 用法：
-#   ./start.sh start [--port PORT]        启动（缺省端口读 config.json，再缺省 8643）
-#   ./start.sh restart [--port PORT]      重启（默认命令）
-#   ./start.sh stop                       停止（PID 优雅停止 → 兜底 pkill）
-#   ./start.sh status                     状态（进程 / 端口 / HTTP 健康检查）
-#   ./start.sh --port PORT                兼容旧用法（等价 restart）
-#   ./start.sh --set-password "新密码"    设置访问密码（不启动服务）
-# 兼容旧脚本：./stop.sh / ./restart.sh / ./status.sh 均为薄壳转发到本脚本。
-# 特性：PID 文件管理 / 端口优先级（--port > config.json > 8643）/
-#       健康检查（启动后最多等 8 秒）/ 重复启动保护 / 无 setsid 退回 nohup
+#   ./start-macos.sh start [--port PORT]        启动
+#   ./start-macos.sh restart [--port PORT]      重启（默认命令）
+#   ./start-macos.sh stop                       停止
+#   ./start-macos.sh status                     状态
+#   ./start-macos.sh --port PORT                兼容旧用法（等价 restart）
+#   ./start-macos.sh --set-password "新密码"    设置访问密码（不启动服务）
+# 说明：自动寻找 node（PATH → /usr/local/bin → /opt/homebrew/bin → 常见 nvm 路径）。
+#       macOS 不用项目 tool/node（那是 linux-x64 二进制）。
 # ============================================================
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVER_DIR="$ROOT/server"
-PID_FILE="$SERVER_DIR/app.pid"
+PID_FILE="/tmp/iwara-macos.pid"
 LOG_FILE="$SERVER_DIR/server.log"
 DEFAULT_PORT=8643
 
-# ---------- Node 查找（tool/node Node24 > PATH 群晖套件 > PATH） ----------
-# 群晖 DSM 默认 PATH 没有 node；项目 tool/node 放官方 Node 24（CF 只放行 Node24 指纹）
-export PATH="$ROOT/tool/node/bin:/usr/local/bin:/var/packages/Node.js_v24/target/usr/local/bin:/var/packages/Node.js_v22/target/usr/local/bin:/var/packages/Node.js_v20/target/usr/local/bin:$PATH"
+# ---------- 查找 node（含 Homebrew / nvm）----------
 find_node() {
-  for c in \
-    "$ROOT/tool/node/bin/node" \
-    /usr/local/bin/node \
-    /var/packages/Node.js_v24/target/usr/local/bin/node \
-    /var/packages/Node.js_v22/target/usr/local/bin/node \
-    /var/packages/Node.js_v20/target/usr/local/bin/node \
-    node; do
-    if [ -n "$c" ] && command -v "$c" >/dev/null 2>&1; then
-      NODE_BIN="$(command -v "$c")"
+  local c
+  for c in node /usr/local/bin/node /opt/homebrew/bin/node "$HOME/.nvm/versions/node"/*/bin/node; do
+    if [ -x "$c" ] || command -v "$c" >/dev/null 2>&1; then
+      if command -v "$c" >/dev/null 2>&1; then NODE_BIN="$(command -v "$c")"; else NODE_BIN="$c"; fi
       return 0
     fi
   done
   return 1
 }
 if ! find_node; then
-  echo "❌ 找不到 node。请把官方 linux-x64 解压到 tool/node/，或安装 Node.js 套件"
+  echo "❌ 找不到 node。请先安装："
+  echo "   brew install node"
+  echo "   或从 https://nodejs.org 下载 macOS LTS 版"
   exit 1
 fi
 echo "使用 Node: $NODE_BIN ($("$NODE_BIN" -v 2>/dev/null))"
@@ -59,11 +53,10 @@ start_server() {
   done
   local port="${port_opt:-$(config_port)}"
 
-  # 已在运行？
   if [ -f "$PID_FILE" ] && [ -s "$PID_FILE" ]; then
     OLD_PID="$(cat "$PID_FILE")"
     if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
-      echo "⚠️  已在运行 (PID $OLD_PID, 端口 $port)。如需重启: ./start.sh restart"
+      echo "⚠️  已在运行 (PID $OLD_PID, 端口 $port)。如需重启: ./start-macos.sh restart"
       return 1
     fi
     rm -f "$PID_FILE"
@@ -89,13 +82,13 @@ start_server() {
       break
     fi
     if ! kill -0 "$NEW_PID" 2>/dev/null; then
-      break   # 进程已退出 = 启动失败
+      break
     fi
   done
 
   if [ "$OK" = 1 ]; then
     echo "✅ 启动成功  PID=$NEW_PID  端口=$port"
-    echo "   页面: http://<本机IP>:$port   日志: $LOG_FILE"
+    echo "   页面: http://127.0.0.1:$port   日志: $LOG_FILE"
   else
     echo "❌ 启动失败（8 秒内未通过健康检查），最近日志："
     tail -15 "$LOG_FILE" 2>/dev/null
@@ -106,7 +99,6 @@ start_server() {
 # ---------- 停止 ----------
 stop_server() {
   local stopped=0
-  # 1) PID 文件优雅停止
   if [ -f "$PID_FILE" ] && [ -s "$PID_FILE" ]; then
     PID="$(cat "$PID_FILE")"
     if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
@@ -124,13 +116,11 @@ stop_server() {
     fi
     rm -f "$PID_FILE"
   fi
-  # 2) 兜底：按命令行匹配（字符类 `[.]`/`[t]` 防止杀掉本脚本自身）
   if pgrep -f 'server/app[.]js --por[t]' > /dev/null 2>&1; then
     echo "兜底清理残留进程..."
     pkill -f 'server/app[.]js --por[t]' 2>/dev/null || true
     stopped=1
   fi
-
   if [ "$stopped" = 1 ]; then
     echo "✅ 服务已停止"
   else
@@ -142,7 +132,7 @@ stop_server() {
 status_server() {
   local port
   port="$(config_port)"
-  echo "=== iwara-downloader-server 状态 ==="
+  echo "=== iwara-downloader-server 状态 (macOS) ==="
   echo "端口配置: $port"
 
   if [ -f "$PID_FILE" ] && [ -s "$PID_FILE" ]; then
@@ -157,10 +147,6 @@ status_server() {
     echo "进程:   ❌ 未运行（无 PID 文件）"
   fi
 
-  if pgrep -f 'server/app[.]js --por[t]' > /dev/null 2>&1; then
-    echo "进程:   ⚠️  发现未记录在 PID 文件的进程: $(pgrep -f 'server/app[.]js --por[t]' | tr '\n' ' ')"
-  fi
-
   if curl -sf -m 5 "http://127.0.0.1:$port/api/status" > /dev/null 2>&1; then
     echo "HTTP:   ✅ http://127.0.0.1:$port/api/status 正常"
     curl -s -m 5 "http://127.0.0.1:$port/api/status" 2>/dev/null | head -c 200
@@ -173,7 +159,6 @@ status_server() {
 }
 
 # ---------- 参数解析 ----------
-# --set-password 作为独立操作
 if [ "${1:-}" = "--set-password" ]; then
   if [ -z "${2:-}" ]; then
     echo "❌ 请提供新密码: --set-password \"新密码\""
@@ -184,17 +169,15 @@ if [ "${1:-}" = "--set-password" ]; then
   exit 0
 fi
 
-# 判断命令（第一个参数），空参数默认 restart
 CMD="${1:-restart}"
 if [ "$CMD" = "--port" ]; then
-  # 兼容旧用法：直接以 --port 开头，视为 restart
   CMD="restart"
   shift
 elif [ "$CMD" = "start" ] || [ "$CMD" = "stop" ] || [ "$CMD" = "restart" ] || [ "$CMD" = "status" ]; then
-  shift   # 去掉命令，剩余参数留给 start
+  shift
 else
-  # 未知参数，当做 start 并保留所有参数（可能是旧用法）
-  CMD="start"
+  # 未知参数，当做 restart 并保留所有参数（可能是旧用法，对齐 start-macos.sh 模板）
+  CMD="restart"
 fi
 
 case "$CMD" in

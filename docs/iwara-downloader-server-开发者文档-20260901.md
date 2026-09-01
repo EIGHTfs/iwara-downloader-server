@@ -30,7 +30,8 @@
 
 ```
 iwara-downloader-server/
-├── start.sh / stop.sh / restart.sh / status.sh
+├── start.sh / start-macos.sh / start-windows.bat / start-windows-background.bat  # 启停脚本（单脚本子命令）
+├── stop.sh / restart.sh / status.sh      # 兼容薄壳 → start.sh
 ├── scripts/git-push.sh                 # 读项目根 .git-push-token 推 origin + tags
 ├── scripts/iwara-cred-fetch.user.js    # 油猴脚本（凭证 + 一键发送 /api/receive）
 ├── userdata-manifest.json              # 用户数据清单（备份/恢复按此收集）
@@ -67,11 +68,16 @@ iwara-downloader-server/
 
 ```bash
 cd /path/to/iwara-downloader-server
-./start.sh          # 后台启动，写 server/app.pid
-./stop.sh           # 读 pid 发 SIGTERM
-./restart.sh        # stop + start
-./status.sh         # 打印进程 / 端口 / 是否在线
+./start.sh                 # 无参 = 默认 restart（未运行则直接启动），写 server/app.pid
+./start.sh start           # 启动；可带 --port 8643
+./start.sh restart         # stop + sleep 1 + start；可带 --port 8643
+./start.sh stop            # 读 pid 发 SIGTERM → 兜底 pkill
+./start.sh status          # 打印进程 / 端口 / HTTP 健康检查
+./start.sh --port 8643     # 兼容旧用法（等价 restart）
+./start.sh --set-password "新密码"   # 设置访问密码（不启动服务）
 ```
+
+旧脚本名 `stop.sh` / `restart.sh` / `status.sh` 保留为薄壳，转发 `start.sh`（旧习惯/文档引用不受影响）。macOS 用 `start-macos.sh`（自动找 Homebrew/nvm node），Windows 用 `start-windows.bat` / `start-windows-background.bat`，命令结构一致。
 
 `start.sh` 选 Node 的顺序：`tool/node/bin/node`（项目自带官方 linux-x64 **Node 24**）→ `/usr/local/bin` → 群晖 Node.js_v24 / v22 / v20 套件。DSM 默认 PATH 没有 `node`。
 
@@ -784,7 +790,7 @@ bash scripts/git-push.sh
 | 项 | 说明 |
 |---|---|
 | 运行位置 | 正式进程改到群晖 SA6400（`/volume6/Game.Patch N MOD/iwara-downloader-server`），与 Aria2 / 下载盘同机，目录选择和「文件已存在跳过」才能看见 `/volume3/WORKGROUP/` |
-| `start.sh` | 自动找 DSM Node 套件；没有 `setsid` 时退回 `nohup` |
+| 启停脚本 | 改单脚本子命令（对照 gbmd start-linux.sh）：`start.sh [start|stop|restart|status] [--port]`，无参默认 restart；`stop.sh/restart.sh/status.sh` 保留为薄壳；补 `start-macos.sh`（Homebrew/nvm）与 `start-windows.bat` / `start-windows-background.bat` |
 | 跳过已下载 | **不看索引**。本机文件名含 `[视频id]` 的非空视频，或 Aria2 活动/等待/已完成记录命中，才跳过、不再 `addUri` |
 | 目录选择 | 设置页下载根目录 📂，对照 gbmd：`GET /api/browse?path=` + 弹窗 |
 | 文件名模板 | 默认 `Iwara_-_{TITLE}_[{ID}]_[{QUALITY}]`，不要写 `.mp4`；设置页列出全部变量 |
