@@ -48,3 +48,23 @@ Thumbs.db
 .vscode/
 *.swp
 *~
+# npm 下载产物（dsh-git-push 自动追加，2026-08-20）
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+bun.lock
+npm-debug.log*
+.npm/
+.pnpm-store/
+# 敏感字段文件（dsh-git-push 自动追加，2026-09-01）
+docs/iwara-downloader-server-开发者文档-20260901.md
+handoff-ui-template.html
+scripts/iwara-cred-fetch.user.js
+server/app.js
+server/auth.js
+server/lib/downloader.js
+server/lib/iwara-api.js
+server/lib/video-index.js
+server/public/app.js
+server/public/index.html
+server/public/login.html
