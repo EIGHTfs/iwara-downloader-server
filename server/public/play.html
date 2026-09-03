@@ -15,7 +15,10 @@ try {
 } catch (_) {}
 </script>
 <style>
-.player-page {
+/* ═══ 播放页布局 ═══ */
+/* header 不用 sticky，播放页独占全屏 */
+.play-body header { position: static; }
+.play-body .player-page {
   display: flex;
   gap: 16px;
   max-width: 1400px;
@@ -65,6 +68,7 @@ try {
 }
 .player-extra { color: var(--muted); font-size: 12px; }
 .player-err { color: var(--fail); margin-top: 8px; font-size: 13px; }
+/* 右侧播放列表 */
 .player-sidebar {
   width: 300px;
   flex-shrink: 0;
@@ -111,13 +115,14 @@ try {
 }
 .loading-more:hover { color: var(--primary); }
 @media (max-width: 900px) {
-  .player-page { flex-direction: column; height: auto; overflow: auto; }
+  .play-body .player-page { flex-direction: column; height: auto; overflow: auto; }
   .player-stage { min-height: 250px; height: 56vw; position: relative; }
   .player-sidebar { width: 100%; max-height: 320px; }
 }
 </style>
 </head>
-<body>
+<body class="play-body">
+<!-- ═══ 顶部导航栏（播放页不 sticky） ═══ -->
 <header>
   <div class="brand-block">
     <a href="/" style="display:flex;align-items:center;gap:10px;color:inherit;text-decoration:none">
@@ -131,12 +136,13 @@ try {
   </div>
 </header>
 
+<!-- ═══ 播放页主体 ═══ -->
 <div class="player-page">
   <div class="player-main">
     <div class="player-stage"><div id="player"></div></div>
     <div class="player-meta">
       <h1 id="title">加载中…</h1>
-      <div class="player-author" id="author"></div>
+      <div class="player-author"><span id="author"></span></div>
       <div class="player-tags" id="tags"></div>
       <div class="player-extra" id="extra"></div>
       <div class="player-err" id="err"></div>
@@ -157,9 +163,21 @@ try {
 <script src="/vendor/artplayer.js"></script>
 <script>
 (function () {
-  const q = new URLSearchParams(location.search);
-  const id = (q.get("id") || "").trim();
-  const $ = (s) => document.querySelector(s);
+  "use strict";
+  // ═══ ID 从 hash 读取：#id=xxx ═══
+  // 用户要求：切换视频不整页刷新，用 hash 导航
+  function getIdFromHash() {
+    var h = location.hash || "";
+    var m = h.match(/#id=([^&]*)/);
+    return m ? decodeURIComponent(m[1]).trim() : "";
+  }
+  function setIdToHash(newId) {
+    if (newId) location.hash = "#id=" + encodeURIComponent(newId);
+    else location.hash = "";
+  }
+  var id = getIdFromHash();
+  var $ = function (s) { return document.querySelector(s); };
+
   function esc(s) {
     return String(s == null ? "" : s)
       .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -171,17 +189,19 @@ try {
   function themeColor() {
     return getComputedStyle(document.documentElement).getPropertyValue("--primary").trim() || "#2563eb";
   }
+
+  // ─── 主题 ───
   function applyThemeBtn() {
-    const night = document.documentElement.getAttribute("data-theme") === "night";
-    const btn = $("#themeBtn");
+    var night = document.documentElement.getAttribute("data-theme") === "night";
+    var btn = $("#themeBtn");
     if (btn) btn.textContent = night ? "☀ 白天" : "🌙 夜间";
   }
   applyThemeBtn();
-  const themeBtn = $("#themeBtn");
+  var themeBtn = $("#themeBtn");
   if (themeBtn) {
     themeBtn.onclick = function () {
-      const night = document.documentElement.getAttribute("data-theme") === "night";
-      const next = night ? "day" : "night";
+      var night = document.documentElement.getAttribute("data-theme") === "night";
+      var next = night ? "day" : "night";
       if (next === "night") document.documentElement.setAttribute("data-theme", "night");
       else document.documentElement.removeAttribute("data-theme");
       try { localStorage.setItem("gbmd-theme", next); } catch (_) {}
@@ -190,16 +210,27 @@ try {
     };
   }
 
-  if (!id) { $("#title").textContent = "缺少视频 id"; return; }
+  // ─── 无 id → 取列表第一个 ───
+  if (!id) {
+    fetch("/api/index").then(function (r) { return r.json(); }).then(function (j) {
+      var map = (j && j.videos && typeof j.videos === "object") ? j.videos : {};
+      var ids = Object.keys(map);
+      if (!ids.length) { $("#title").textContent = "没有可播放的视频"; return; }
+      ids.sort(function (a, b) {
+        return String((map[b] || {}).createdAt || "").localeCompare(String((map[a] || {}).createdAt || ""));
+      });
+      setIdToHash(ids[0]);
+    }).catch(function () { $("#title").textContent = "加载列表失败"; });
+    return;
+  }
 
-  const PAGE_SIZE = 20;
-  let art = null;
-  let allVideos = [];
-  let displayedCount = 0;
+  var PAGE_SIZE = 20;
+  var art = null;
+  var allVideos = [];
+  var displayedCount = 0;
+  var loadingVideo = false; // 防止并发加载
 
-  // 用户原话：「没下载完的part文件我希望也能部分播放」
-  // AI 思路：.part 已写入字节就能播；ArtPlayer 按 Content-Length 当完整文件，
-  // 所以服务端把 total 报成已写入大小。播放中 seek 超出当前时长就夹回去。
+  // ─── 初始化播放器 ───
   function initPlayer(info, poster) {
     if (!info.hasFile) {
       $("#err").textContent = info.partial
@@ -207,10 +238,7 @@ try {
         : "没有可播放的视频文件";
       return;
     }
-    if (art) {
-      try { art.destroy(false); } catch (_) {}
-      art = null;
-    }
+    if (art) { try { art.destroy(false); } catch (_) {} art = null; }
     art = new Artplayer({
       container: "#player",
       url: "/api/play?id=" + encodeURIComponent(id),
@@ -238,10 +266,7 @@ try {
     });
     window.__art = art;
     try {
-      if (art.video) {
-        art.video.removeAttribute("crossorigin");
-        art.video.crossOrigin = null;
-      }
+      if (art.video) { art.video.removeAttribute("crossorigin"); art.video.crossOrigin = null; }
     } catch (_) {}
     art.on("error", function (err) {
       $("#err").textContent = (err && err.message) || "播放失败";
@@ -249,64 +274,54 @@ try {
     if (info.partial) {
       $("#err").textContent = "边下边播：进度条只到已写入部分，拖到后面会回到已缓存处。下完刷新看全片。";
       art.on("video:seeking", function () {
-        const v = art.video;
+        var v = art.video;
         if (!v || !isFinite(v.duration) || v.duration <= 0) return;
         if (v.currentTime > v.duration - 0.25) v.currentTime = Math.max(0, v.duration - 0.5);
       });
     }
   }
 
+  // ─── 播放列表 ───
   function catalogVideos(j) {
-    const map = (j && j.videos && typeof j.videos === "object") ? j.videos : {};
+    var map = (j && j.videos && typeof j.videos === "object") ? j.videos : {};
     return Object.keys(map).map(function (vid) {
-      const e = map[vid] || {};
-      return {
-        id: vid,
-        title: e.title || vid,
-        name: e.name || e.username || "",
-        duration: e.duration || 0,
-        fileId: e.fileId || "",
-        createdAt: e.createdAt || ""
-      };
-    }).sort(function (a, b) {
-      return String(b.createdAt).localeCompare(String(a.createdAt));
-    });
+      var e = map[vid] || {};
+      return { id: vid, title: e.title || vid, name: e.name || e.username || "", duration: e.duration || 0, fileId: e.fileId || "", createdAt: e.createdAt || "" };
+    }).sort(function (a, b) { return String(b.createdAt).localeCompare(String(a.createdAt)); });
+  }
+
+  // 封面 URL 加时间戳防缓存：播放后刷新封面
+  function thumbUrl(vid) {
+    return "/api/thumb?id=" + encodeURIComponent(vid) + "&t=" + Date.now();
   }
 
   function renderPlaylist(clear) {
-    const container = $("#playlist");
-    const countEl = $("#listCount");
-    const loadingEl = $("#loadingMore");
-    if (clear) {
-      container.innerHTML = "";
-      displayedCount = 0;
-    }
+    var container = $("#playlist");
+    var countEl = $("#listCount");
+    var loadingEl = $("#loadingMore");
+    if (clear) { container.innerHTML = ""; displayedCount = 0; }
     if (!allVideos.length) {
       container.innerHTML = '<div class="sidebar-empty">索引里还没有其它视频</div>';
       countEl.textContent = "";
       loadingEl.style.display = "none";
       return;
     }
-    const start = displayedCount;
-    const end = Math.min(start + PAGE_SIZE, allVideos.length);
-    for (let i = start; i < end; i++) {
-      const v = allVideos[i];
-      const item = document.createElement("div");
+    var start = displayedCount;
+    var end = Math.min(start + PAGE_SIZE, allVideos.length);
+    for (var i = start; i < end; i++) {
+      var v = allVideos[i];
+      var item = document.createElement("div");
       item.className = "playlist-item" + (v.id === id ? " active" : "");
-      const thumbSrc = v.id
-        ? "/api/thumb?id=" + encodeURIComponent(v.id)
-        : "";
+      // 首次加载用普通 URL（浏览器缓存），切换视频后用时间戳刷新
+      var src = v.id ? "/api/thumb?id=" + encodeURIComponent(v.id) : "";
       item.innerHTML =
-        (thumbSrc ? '<img class="thumb" src="' + esc(thumbSrc) + '" alt="" onerror="this.style.visibility=\'hidden\'">' : '<div class="thumb"></div>') +
+        (src ? '<img class="thumb" data-vid="' + esc(v.id) + '" src="' + esc(src) + '" alt="" loading="lazy" onerror="this.style.visibility=\'hidden\'">' : '<div class="thumb"></div>') +
         '<div class="info">' +
-          '<div class="title" title="' + esc(v.title) + '">' + esc(v.title) + "</div>" +
-          '<div class="meta">' + esc(v.name) + (v.duration ? " · " + dur(v.duration) : "") + "</div>" +
-        "</div>";
+          '<div class="title" title="' + esc(v.title) + '">' + esc(v.title) + '</div>' +
+          '<div class="meta">' + esc(v.name) + (v.duration ? " · " + dur(v.duration) : "") + '</div>' +
+        '</div>';
       item.onclick = (function (vid) {
-        return function () {
-          if (vid === id) return;
-          location.href = "/play.html?id=" + encodeURIComponent(vid);
-        };
+        return function () { if (vid !== id) setIdToHash(vid); };
       })(v.id);
       container.appendChild(item);
     }
@@ -320,14 +335,87 @@ try {
     }
   }
 
+  // 刷新当前视频的封面缩略图（列表里的 + poster）
+  function refreshCurrentThumb() {
+    var ts = Date.now();
+    // 列表里 active 项的缩略图
+    var activeImg = document.querySelector(".playlist-item.active .thumb[data-vid]");
+    if (activeImg) activeImg.src = "/api/thumb?id=" + encodeURIComponent(id) + "&t=" + ts;
+    // 播放器 poster
+    if (art) art.poster = "/api/thumb?id=" + encodeURIComponent(id) + "&t=" + ts;
+  }
+
   function bindLazyLoad() {
-    const list = $("#playlist");
-    const more = $("#loadingMore");
+    var list = $("#playlist");
+    var more = $("#loadingMore");
     more.onclick = function () { renderPlaylist(false); };
     list.addEventListener("scroll", function () {
       if (displayedCount >= allVideos.length) return;
       if (list.scrollTop + list.clientHeight >= list.scrollHeight - 40) renderPlaylist(false);
     });
+  }
+
+  // ─── 加载视频（play-info + 更新播放器） ───
+  function loadVideo(newId) {
+    if (!newId || loadingVideo) return;
+    loadingVideo = true;
+    id = newId;
+    // 清空旧状态
+    $("#title").textContent = "加载中…";
+    $("#author").textContent = "";
+    $("#tags").innerHTML = "";
+    $("#extra").textContent = "";
+    $("#err").textContent = "";
+    // 更新 active 状态
+    var items = document.querySelectorAll(".playlist-item");
+    for (var i = 0; i < items.length; i++) {
+      var img = items[i].querySelector(".thumb[data-vid]");
+      var vid = img ? img.getAttribute("data-vid") : "";
+      items[i].className = "playlist-item" + (vid === id ? " active" : "");
+    }
+
+    fetch("/api/play-info?id=" + encodeURIComponent(id))
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        loadingVideo = false;
+        if (!j) return;
+        if (!j.ok) throw new Error(j.error || "读取失败");
+        document.title = (j.title || id) + " · 本地播放";
+        $("#title").textContent = j.title || id;
+        $("#author").innerHTML = j.username
+          ? '<a href="https://www.iwara.tv/profile/' + encodeURIComponent(j.username) + '" target="_blank" rel="noopener">' + esc(j.name || j.username) + '</a>'
+          : esc(j.name || "");
+        var tags = Array.isArray(j.tags) ? j.tags : [];
+        $("#tags").innerHTML = tags.map(function (t) { return "<span>" + esc(t.id || t) + "</span>"; }).join("");
+        var extra = [];
+        if (j.duration) extra.push("时长 " + dur(j.duration));
+        if (j.createdAt) extra.push("上传 " + String(j.createdAt).slice(0, 10));
+        extra.push("id " + id);
+        $("#extra").textContent = extra.join(" · ");
+        initPlayer(j, thumbUrl(id));
+        // play-info 返回后刷新封面（服务端 ensureFromInfo 可能刚抽帧）
+        setTimeout(refreshCurrentThumb, 500);
+        setTimeout(refreshCurrentThumb, 2000);
+      })
+      .catch(function (e) {
+        loadingVideo = false;
+        $("#title").textContent = "无法播放";
+        $("#err").textContent = e.message || String(e);
+      });
+  }
+
+  // ─── hashchange 监听：切换视频不刷新页面 ───
+  window.addEventListener("hashchange", function () {
+    var newId = getIdFromHash();
+    if (newId && newId !== id) loadVideo(newId);
+  });
+
+  // ─── 首次加载 ───
+  // 并行加载 play-info 和 index
+  var playInfoDone = false;
+  var indexDone = false;
+  function tryInit() {
+    if (playInfoDone && indexDone) bindLazyLoad();
   }
 
   fetch("/api/play-info?id=" + encodeURIComponent(id))
@@ -337,37 +425,40 @@ try {
       if (!j.ok) throw new Error(j.error || "读取失败");
       document.title = (j.title || id) + " · 本地播放";
       $("#title").textContent = j.title || id;
-      const name = j.name || j.username || "";
-      $("#author").innerHTML = name
-        ? (j.username
-          ? '<a href="https://www.iwara.tv/profile/' + encodeURIComponent(j.username) + '" target="_blank" rel="noopener">' + esc(name) + "</a>"
-          : esc(name))
-        : "";
-      const tags = Array.isArray(j.tags) ? j.tags : [];
+      $("#author").innerHTML = j.username
+        ? '<a href="https://www.iwara.tv/profile/' + encodeURIComponent(j.username) + '" target="_blank" rel="noopener">' + esc(j.name || j.username) + '</a>'
+        : esc(j.name || "");
+      var tags = Array.isArray(j.tags) ? j.tags : [];
       $("#tags").innerHTML = tags.map(function (t) { return "<span>" + esc(t.id || t) + "</span>"; }).join("");
-      const extra = [];
+      var extra = [];
       if (j.duration) extra.push("时长 " + dur(j.duration));
       if (j.createdAt) extra.push("上传 " + String(j.createdAt).slice(0, 10));
       extra.push("id " + id);
       $("#extra").textContent = extra.join(" · ");
-      initPlayer(j, "/api/thumb?id=" + encodeURIComponent(id));
+      initPlayer(j, thumbUrl(id));
+      setTimeout(refreshCurrentThumb, 500);
+      setTimeout(refreshCurrentThumb, 2000);
+      playInfoDone = true;
+      tryInit();
     })
     .catch(function (e) {
       $("#title").textContent = "无法播放";
       $("#err").textContent = e.message || String(e);
+      playInfoDone = true;
+      tryInit();
     });
 
-  fetch("/api/index")
-    .then(function (r) { return r.json(); })
-    .then(function (j) {
-      if (!j.ok) return;
-      allVideos = catalogVideos(j);
-      renderPlaylist(true);
-      bindLazyLoad();
-    })
-    .catch(function () {
-      $("#playlist").innerHTML = '<div class="sidebar-empty">播放列表加载失败</div>';
-    });
+  fetch("/api/index").then(function (r) { return r.json(); }).then(function (j) {
+    if (!j || !j.ok) return;
+    allVideos = catalogVideos(j);
+    renderPlaylist(true);
+    indexDone = true;
+    tryInit();
+  }).catch(function () {
+    $("#playlist").innerHTML = '<div class="sidebar-empty">播放列表加载失败</div>';
+    indexDone = true;
+    tryInit();
+  });
 
   window.addEventListener("beforeunload", function () {
     if (art) { try { art.destroy(false); } catch (_) {} }

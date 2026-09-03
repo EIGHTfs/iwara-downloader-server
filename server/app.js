@@ -343,6 +343,11 @@ const server = http.createServer(async (req, res) => {
       const found = videoIndex.findPlayable(c.downloadPath, id, hint.savePath);
       if (!found && !hint.savePath) return sendJson(res, 404, { ok: false, error: "下载目录里没有这个视频" });
       const e = (found && found.entry) || {};
+      // 2026-09-03 用户原话：「视频文件不存在就不要生成封面图」
+      // 最简逻辑：有视频文件就抽帧覆盖，没有就跳过
+      if (found && found.file && id) {
+        thumbCache.ensureFromInfo(id, e, found.file).catch(function () {});
+      }
       const size = (found && found.size) || 0;
       const expected = hint.expected || size;
       const growing = expected > 0 && size > 0 && size < expected;

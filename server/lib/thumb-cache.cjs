@@ -170,12 +170,34 @@ function ensureThumb(id, opts) {
   return job;
 }
 
+// 2026-09-03 用户原话：「视频文件不存在就不要生成封面图」
+// 最简逻辑：filePath 不存在 → 跳过；已存在 → 抽帧覆盖
 function ensureFromInfo(id, info, filePath) {
-  return ensureThumb(id, {
-    filePath: filePath || "",
-    fileId: fileIdOf(info),
-    n: thumbIndexOf(info)
-  });
+  const vid = safeId(id);
+  if (!vid) return Promise.resolve(null);
+  const fp = filePath || "";
+  if (!fp) return Promise.resolve(null);
+  // 检查视频文件是否存在
+  try {
+    if (!fs.existsSync(fp) || !fs.statSync(fp).isFile()) return Promise.resolve(null);
+  } catch (_) { return Promise.resolve(null); }
+  if (inflight.has(vid)) return inflight.get(vid);
+  const job = (async () => {
+    const out = thumbPath(vid);
+    if (await extractFrame(fp, out)) return readThumb(vid);
+    // 本地抽帧失败，尝试从 Iwara CDN 下载
+    const fid = fileIdOf(info);
+    if (fid) {
+      const remote = await fetchRemote(vid, fid, thumbIndexOf(info));
+      if (remote) return remote;
+    }
+    return null;
+  })().catch((e) => {
+    console.error("[thumb] ensureFromInfo", vid, e && e.message || e);
+    return null;
+  }).finally(() => inflight.delete(vid));
+  inflight.set(vid, job);
+  return job;
 }
 
 function localSrc(id) {

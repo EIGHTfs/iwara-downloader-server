@@ -250,6 +250,38 @@ A: 项目根 `.git-push-token`（一行 token，已 gitignore）。推送：`bas
 
 ---
 
+
+---
+
+## TODO
+
+### 封面状态机
+
+当前封面生成逻辑：视频文件不存在 → 不生成；存在 → 抽帧覆盖。
+
+**待实现：引入「状态机」解耦 video_status 和 cover_status**
+
+- video_status：pending → transcoding → available / unavailable（源文件丢失）
+- cover_status：empty → generating → done / failed
+
+生成条件：video_status = available 且 cover_status != done
+
+好处：
+- 错误封面不再占位（cover_status=done 但 video_status=unavailable 时不生成）
+- 视频源恢复后自动触发重新生成
+- 避免每次播放都重复抽帧
+
+
+---
+- cover_status：empty → generating → done / failed
+
+生成条件：video_status = available 且 cover_status != done
+
+好处：
+- 错误封面不再占位（cover_status=done 但 video_status=unavailable 时不生成）
+- 视频源恢复后自动触发重新生成
+- 避免每次播放都重复抽帧
+
 ## License
 
 MIT

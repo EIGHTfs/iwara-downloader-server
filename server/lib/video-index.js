@@ -133,7 +133,7 @@ function normalizeEntry(raw) {
       fileId: String(file.id || raw.fileId || ""),
       duration: Number(file.duration || raw.duration) || 0,
       tags: asTags(raw.tags),
-      createdAt: String(raw.createdAt || "")
+      createdAt: String(raw.createdAt || ""),
     };
   }
   if (!looksLikeEntry(raw)) return null;
@@ -197,7 +197,7 @@ function fromDownload(info, item) {
       fileId: String(file.id || ""),
       duration: Number(file.duration) || 0,
       tags: asTags(raw.tags),
-      createdAt: String(raw.createdAt || "")
+      createdAt: String(raw.createdAt || ""),
     }
   };
 }
