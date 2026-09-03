@@ -4,13 +4,14 @@
 # 用法：
 #   ./start.sh start [--port PORT]        启动（缺省端口读 config.json，再缺省 8643）
 #   ./start.sh restart [--port PORT]      重启（默认命令）
-#   ./start.sh stop                       停止（PID 优雅停止 → 兜底 pkill）
+#   ./start.sh stop                       停止（只杀 PID 文件里的进程，先 TERM 后 KILL）
 #   ./start.sh status                     状态（进程 / 端口 / HTTP 健康检查）
 #   ./start.sh --port PORT                兼容旧用法（等价 restart）
 #   ./start.sh --set-password "新密码"    设置访问密码（不启动服务）
 # 兼容旧脚本：./stop.sh / ./restart.sh / ./status.sh 均为薄壳转发到本脚本。
 # 特性：PID 文件管理 / 端口优先级（--port > config.json > 8643）/
 #       健康检查（启动后最多等 8 秒）/ 重复启动保护 / 无 setsid 退回 nohup
+# 2026-09-04：kill-gate-service-script 禁止 pgrep/pkill 宽匹配兜底。
 # ============================================================
 set -uo pipefail
 
@@ -114,7 +115,7 @@ stop_server() {
     if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
       echo "发送 SIGTERM 给 PID=$PID ..."
       kill "$PID" 2>/dev/null || true
-      for i in 1 2 3 4 5; do
+      for i in $(seq 1 10); do
         sleep 1
         kill -0 "$PID" 2>/dev/null || { stopped=1; break; }
       done
@@ -126,13 +127,16 @@ stop_server() {
     fi
     rm -f "$PID_FILE"
   fi
-  # 2) 兜底：只匹配 node boot.cjs（字符类防杀掉本脚本；排除 grep 自身）
-  extra="$(pgrep -f '[n]ode .*boot[.]cjs' 2>/dev/null || true)"
-  if [ -n "$extra" ]; then
-    echo "兜底清理残留进程..."
-    echo "$extra" | xargs -r kill 2>/dev/null || true
-    stopped=1
-  fi
+  # 2026-09-04 修改：停服务只杀 PID 文件。
+  # 【原代码】pgrep -f '[n]ode .*boot[.]cjs' | xargs kill
+  # 【改为】kill-gate-service-script：禁止 pgrep/pkill 宽匹配；只精确 kill PID 文件。
+  # 【思路】宽匹配可能误伤其他项目的 boot.cjs；PID 对不上时用 status 报未记录进程，不自动杀。
+  # extra="$(pgrep -f '[n]ode .*boot[.]cjs' 2>/dev/null || true)"
+  # if [ -n "$extra" ]; then
+  #   echo "兜底清理残留进程..."
+  #   echo "$extra" | xargs -r kill 2>/dev/null || true
+  #   stopped=1
+  # fi
 
   if [ "$stopped" = 1 ]; then
     echo "✅ 服务已停止"
@@ -160,16 +164,17 @@ status_server() {
     echo "进程:   ❌ 未运行（无 PID 文件）"
   fi
 
-  extra="$(pgrep -f '[n]ode .*boot[.]cjs' 2>/dev/null || true)"
-  if [ -n "$extra" ]; then
-    extra_other=""
-    for p in $extra; do
-      if [ "$p" != "${PID:-}" ]; then extra_other="$extra_other $p"; fi
-    done
-    extra_other="$(echo "$extra_other" | xargs)"
-    if [ -n "$extra_other" ]; then
-      echo "进程:   ⚠️  发现未记录在 PID 文件的进程: $extra_other"
-    fi
+  # status 只展示、不杀：按本项目 cwd+boot.cjs 精确匹配，避免扫到别的项目
+  extra="$(ps -eo pid,args | awk -v root="$ROOT" '
+    $0 ~ /boot\.cjs/ && $0 ~ /node/ && index($0, root) { print $1 }
+  ')"
+  extra_other=""
+  for p in $extra; do
+    if [ "$p" != "${PID:-}" ]; then extra_other="$extra_other $p"; fi
+  done
+  extra_other="$(echo "$extra_other" | xargs)"
+  if [ -n "$extra_other" ]; then
+    echo "进程:   ⚠️  发现未记录在 PID 文件的进程: $extra_other"
   fi
 
   if curl -sf -m 5 "http://127.0.0.1:$port/api/status" > /dev/null 2>&1; then
