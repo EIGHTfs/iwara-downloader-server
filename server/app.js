@@ -316,18 +316,31 @@ const server = http.createServer(async (req, res) => {
           }
         } catch (_) {}
       }
-      if (!img || !img.buf) return sendJson(res, 404, { ok: false, error: "无封面" });
-      // 2026-09-03：封面服务端更新后前端仍显示旧图。
-      // 用户原话：「封面图明明服务端更新了，前端似乎缓存没更新」
-      // 【原代码】Cache-Control: public, max-age=86400 —— 浏览器强缓存一天，不回头问服务器。
-      // 【改为】no-cache + ETag/Last-Modified，文件 mtime 变了才 200 新图，没变 304。
+      if (!img || !img.buf) {
+        // 2026-09-04：缺封面不要回 JSON。用户原话「前端正常刷新封面了，刷新又没了」。
+        // 【原代码】sendJson(res, 404, { ok: false, error: "无封面" })
+        // 【改为】<img> 收到 application/json 会 onerror，play.html 把 visibility 设 hidden 后即使后来有图也不恢复。
+        // 【思路】404 空 body + image/jpeg，让浏览器当缺图，不把 JSON 当永久失败态。
+        res.writeHead(404, {
+          "Content-Type": "image/jpeg",
+          "Content-Length": 0,
+          "Cache-Control": "no-store"
+        });
+        return res.end();
+      }
+      // 2026-09-04 再改：GET 始终带 JPEG body，不再 304。
+      // 【原代码】If-None-Match 命中则 304 空 body。用户原话「前端正常刷新封面了，刷新又没了」。
+      // 【思路】no-cache + 304 时部分浏览器没存上一次 JPEG，空 body 画不出图；<img> 当作坏图走 onerror 藏掉。
+      //   ETag/Last-Modified 仍返回，HEAD 才 304。文件约十几 KB，每次刷新带 body 最稳。
       const etag = img.size != null && img.mtimeMs != null
         ? '"' + String(img.size) + "-" + String(Math.floor(img.mtimeMs)) + '"'
         : '"' + String(img.buf.length) + '"';
-      const inm = String(req.headers["if-none-match"] || "");
-      if (inm && inm === etag) {
-        res.writeHead(304, { ETag: etag, "Cache-Control": "no-cache" });
-        return res.end();
+      if (method === "HEAD") {
+        const inm = String(req.headers["if-none-match"] || "");
+        if (inm && inm === etag) {
+          res.writeHead(304, { ETag: etag, "Cache-Control": "no-cache" });
+          return res.end();
+        }
       }
       const headers = {
         "Content-Type": img.contentType || "image/jpeg",

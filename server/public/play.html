@@ -328,7 +328,7 @@ try {
       // 首次加载用普通 URL（浏览器缓存），切换视频后用时间戳刷新
       var src = v.id ? "/api/thumb?id=" + encodeURIComponent(v.id) : "";
       item.innerHTML =
-        (src ? '<img class="thumb" data-vid="' + esc(v.id) + '" src="' + esc(src) + '" alt="" loading="lazy" onerror="this.style.visibility=\'hidden\'">' : '<div class="thumb"></div>') +
+        (src ? '<img class="thumb" data-vid="' + esc(v.id) + '" src="' + esc(src) + '" alt="" loading="lazy" onerror="this.dataset.miss=1" onload="this.style.visibility=\'visible\';this.dataset.miss=\'\'">' : '<div class="thumb"></div>') +
         '<div class="info">' +
           '<div class="title" title="' + esc(v.title) + '">' + esc(v.title) + '</div>' +
           '<div class="meta">' + esc(v.name) + (v.duration ? " · " + dur(v.duration) : "") + '</div>' +
@@ -350,11 +350,15 @@ try {
 
   // 刷新当前视频的封面缩略图（列表里的 + poster）
   function refreshCurrentThumb() {
+    // 2026-09-04：换 src 前清 hidden。用户原话「前端正常刷新封面了，刷新又没了」。
+    // 【原代码】onerror 设 visibility=hidden，refreshCurrentThumb 只改 src，hidden 不恢复。
+    // 【思路】第一次 404/304 空图把图藏死后，即使后面 JPEG 200 也看不见。
     var ts = Date.now();
-    // 列表里 active 项的缩略图
     var activeImg = document.querySelector(".playlist-item.active .thumb[data-vid]");
-    if (activeImg) activeImg.src = "/api/thumb?id=" + encodeURIComponent(id) + "&t=" + ts;
-    // 播放器 poster
+    if (activeImg) {
+      activeImg.style.visibility = "visible";
+      activeImg.src = "/api/thumb?id=" + encodeURIComponent(id) + "&t=" + ts;
+    }
     if (art) art.poster = "/api/thumb?id=" + encodeURIComponent(id) + "&t=" + ts;
   }
 

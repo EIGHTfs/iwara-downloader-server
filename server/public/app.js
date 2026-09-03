@@ -381,6 +381,7 @@ function renderTask(task) {
       img.alt = "";
       img.loading = "lazy";
       img.onerror = function () { this.style.display = "none"; };
+      img.onload = function () { this.style.display = ""; };
       img.src = "/api/thumb?id=" + encodeURIComponent(it.id);
       row.replaceChild(img, thumb);
       thumb = img;
