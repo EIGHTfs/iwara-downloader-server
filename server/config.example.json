@@ -17,5 +17,6 @@
   "passwordSalt": "",
   "passwordHash": "",
   "sessionHours": 72,
-  "checkDownloadLink": false
+  "checkDownloadLink": false,
+  "downloadToggles": { "video": true, "json": true }
 }

@@ -49,19 +49,33 @@ const DEFAULT_CONFIG = {
   passwordHash: "",
   sessionHours: 72,
   // 网盘链接探测（预留，后续版本启用）
-  checkDownloadLink: false
+  checkDownloadLink: false,
+  // 2026-09-03 用户原话：设置里选下载内容「视频 / json（自己生成的索引）」
+  downloadToggles: { video: true, json: true }
 };
+
+function normalizeDownloadToggles(raw) {
+  const src = raw && typeof raw === "object" ? raw : {};
+  return {
+    video: src.video !== false,
+    json: src.json !== false
+  };
+}
 
 function readConfig() {
   try {
     if (fs.existsSync(CONFIG_FILE)) {
       const data = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8"));
-      return Object.assign({}, DEFAULT_CONFIG, data);
+      const merged = Object.assign({}, DEFAULT_CONFIG, data);
+      merged.downloadToggles = normalizeDownloadToggles(data.downloadToggles);
+      return merged;
     }
   } catch (e) {
     console.error("[config] 读取失败，使用默认配置:", e && e.message);
   }
-  return Object.assign({}, DEFAULT_CONFIG);
+  const fallback = Object.assign({}, DEFAULT_CONFIG);
+  fallback.downloadToggles = normalizeDownloadToggles(DEFAULT_CONFIG.downloadToggles);
+  return fallback;
 }
 
 function writeConfig(obj) {
@@ -100,4 +114,4 @@ function hasPassword() {
   return !!(cfg.passwordHash && cfg.passwordSalt);
 }
 
-module.exports = { readConfig, writeConfig, hashPassword, verifyPassword, setPassword, hasPassword, DEFAULT_CONFIG, CONFIG_FILE };
+module.exports = { readConfig, writeConfig, hashPassword, verifyPassword, setPassword, hasPassword, normalizeDownloadToggles, DEFAULT_CONFIG, CONFIG_FILE };
