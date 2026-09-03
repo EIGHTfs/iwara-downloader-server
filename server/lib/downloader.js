@@ -230,7 +230,7 @@ function restorePendingTask() {
       const saved = JSON.parse(fs.readFileSync(TASK_FILE, "utf8"));
       if (saved && Array.isArray(saved.items)) {
         // 恢复未完成任务（保持 paused 状态，等待用户恢复）
-        const pending = saved.items.filter((i) => i.state === "pending" || i.state === "downloading");
+        const pending = saved.items.filter((i) => i.state === "pending" || i.state === "downloading" || i.state === "retry-wait");
         pending.forEach((i) => (i.state = "pending"));
         task = Object.assign(task, saved, { items: saved.items, status: "paused" });
         if (pending.length > 0) console.log(`[downloader] 恢复 ${pending.length} 个未完成任务（已暂停，等待恢复）`);
@@ -368,10 +368,15 @@ function downloadToFile(item, onProgress) {
   });
 }
 
-function aria2Rpc(method, params) {
+function aria2LocalRpc() {
+  return "http://127.0.0.1:6800/jsonrpc";
+}
+
+function aria2Rpc(method, params, opts) {
+  opts = opts || {};
   const c = cfg.readConfig();
   const token = c.aria2Token;
-  const endpoint = c.aria2Path && c.aria2Path.trim() ? c.aria2Path.trim() : "http://127.0.0.1:6800/jsonrpc";
+  const endpoint = opts.endpoint || (c.aria2Path && c.aria2Path.trim() ? c.aria2Path.trim() : aria2LocalRpc());
   const body = {
     jsonrpc: "2.0",
     id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(16).slice(2),
@@ -413,7 +418,14 @@ function aria2Rpc(method, params) {
             }
             resolve(j.result);
           } catch (e) {
-            reject(new Error("aria2 返回非 JSON: " + String(d).slice(0, 120)));
+            const snippet = String(d || "").replace(/\s+/g, " ").slice(0, 80);
+            const local = aria2LocalRpc();
+            // 用户原话：「theenjoyerkk · aria2 返回非 JSON」——群晖 CGI 常回空/HTML，本机 6800 才是 JSON。
+            if (!opts.noFallback && endpoint !== local) {
+              console.warn("[downloader] aria2 CGI 非 JSON HTTP " + res.statusCode + "，改走 " + local + (snippet ? " 片段:" + snippet : ""));
+              return resolve(aria2Rpc(method, params, { endpoint: local, noFallback: true }));
+            }
+            reject(new Error("aria2 返回非 JSON (HTTP " + res.statusCode + ")" + (snippet ? ": " + snippet : "（空响应）")));
           }
         });
       }
@@ -925,6 +937,7 @@ async function processOneItem(item) {
       item.state = "retry-wait";
       await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * item.retries));
       if (task.status === "running") item.state = "pending";
+      else item.state = "failed";
     } else {
       item.state = "failed";
       task.failed++;
@@ -1261,10 +1274,11 @@ function retryFailed(id) {
   let n = 0;
   for (const it of task.items) {
     if (vid && it.id !== vid) continue;
-    if (it.state === "failed" || it.state === "error") {
+    if (it.state === "failed" || it.state === "error" || it.state === "retry-wait") {
       it.state = "pending";
       it.retries = 0;
       it.error = "";
+      it.aria2Gid = "";
       n++;
     }
   }

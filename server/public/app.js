@@ -292,7 +292,7 @@ function startTaskPoll() {
 //   }
 //   const items = task.items || [];
 //   const doneN = items.filter((it) => it.state === "done" || it.state === "skipped" || it.state === "submitted").length;
-//   const failN = items.filter((it) => it.state === "failed" || it.state === "error").length;
+//   const failN = items.filter((it) => it.state === "failed" || it.state === "error" || it.state === "retry-wait").length;
 //   const runN = items.filter((it) => it.state === "downloading").length;
 //   const pct = items.length ? Math.round((doneN / items.length) * 100) : 0;
 //   $("#progressFill").style.width = pct + "%";
@@ -500,7 +500,7 @@ function renderTask(task) {
     } else if (it.id && it.state === "stopped") {
       actBtns += '<button type="button" class="mm-resume-btn" data-id="' + esc(it.id) + '" title="重新入队">▶ 继续</button>' +
         '<button type="button" class="mm-skip-btn" data-id="' + esc(it.id) + '" title="从列表移除（不删文件）">🚫 移除</button>';
-    } else if (it.id && (it.state === "failed" || it.state === "error")) {
+    } else if (it.id && (it.state === "failed" || it.state === "error" || it.state === "retry-wait")) {
       actBtns += '<button type="button" class="mm-retry-btn" data-id="' + esc(it.id) + '" title="重试下载此视频">🔄 重试</button>' +
         '<button type="button" class="mm-skip-btn" data-id="' + esc(it.id) + '" title="从列表移除（不删文件）">🚫 移除</button>';
     } else if (it.id && (it.state === "done" || it.state === "skipped" || it.state === "submitted")) {
