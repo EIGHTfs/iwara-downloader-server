@@ -186,8 +186,12 @@ function bindProgress() {
       const id = skipBtn.getAttribute("data-id");
       if (!id) return;
       const r = await api("/api/task/remove-item", "POST", { id });
-      if (r && r.ok) showFeedback("已跳过（文件仍在）", "ok");
-      else showFeedback((r && r.error) || "跳过失败", "err");
+      // 2026-09-04：下载完单项从列表拿掉，文案叫「移除」不是「跳过」。
+      // 【原代码】showFeedback("已跳过（文件仍在）") / "跳过失败"
+      // 【改为】用户原话「下载完单项移除列表描述错误，现在叫跳过，改叫移除」
+      // 【思路】接口仍是 /api/task/remove-item，不删文件；只改按钮和反馈文案。
+      if (r && r.ok) showFeedback("已移除（文件仍在）", "ok");
+      else showFeedback((r && r.error) || "移除失败", "err");
     });
   }
   startTaskPoll();
@@ -411,9 +415,9 @@ function renderTask(task) {
     }
     if (it.id && (it.state === "failed" || it.state === "error")) {
       actBtns += '<button type="button" class="mm-retry-btn" data-id="' + esc(it.id) + '" title="重试下载此视频">🔄 重试</button>' +
-        '<button type="button" class="mm-skip-btn" data-id="' + esc(it.id) + '" title="从列表拿掉（不删文件）">🚫 跳过</button>';
+        '<button type="button" class="mm-skip-btn" data-id="' + esc(it.id) + '" title="从列表移除（不删文件）">🚫 移除</button>';
     } else if (it.id && (it.state === "done" || it.state === "skipped" || it.state === "submitted")) {
-      actBtns += '<button type="button" class="mm-skip-btn" data-id="' + esc(it.id) + '" title="从列表拿掉（不删文件）">🚫 跳过</button>';
+      actBtns += '<button type="button" class="mm-skip-btn" data-id="' + esc(it.id) + '" title="从列表移除（不删文件）">🚫 移除</button>';
     }
     const statusEl = row.querySelector(".status-text");
     if (statusEl) {
