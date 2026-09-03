@@ -490,6 +490,16 @@ function listCatalog(root) {
   return { count: Object.keys(result).length, videos: result };
 }
 
+function readEntry(id) {
+  const vid = String(id || "").trim();
+  if (!vid) return null;
+  migrateIndexDir();
+  const fromSidecar = parseIndexPayload(readJson(path.join(INDEX_DIR, vid + ".json")));
+  if (fromSidecar[vid]) return fromSidecar[vid];
+  const map = parseIndexPayload(readJson(serverCatalogPath()));
+  return map[vid] || null;
+}
+
 function hasVideo(root, id) {
   const vid = String(id || "").trim();
   if (!vid) return false;
@@ -571,6 +581,7 @@ module.exports = {
   listCatalog,
   findPlayable,
   hasVideo,
+  readEntry,
   catalogFileBuffer,
   scanDownloadDir,
   sidecarFileName,

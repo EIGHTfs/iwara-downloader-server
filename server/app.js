@@ -310,7 +310,18 @@ const server = http.createServer(async (req, res) => {
       // 【改为】用户原话「搜索时，下载时从官方获取封面并按本地规范保存」「视频播放从本地获取，包括这从网上获取保存到本地的」
       // 【思路】官方拉取放到搜索/下载后台队列；这里只 readThumb。缺图时若带 file 则入队，这次 404，下次刷新有图。
       let img = id ? thumbCache.readThumb(id) : null;
-      if (!img && id && fileId) thumbCache.enqueueOfficialThumb(id, fileId, n);
+      if (!img && id) {
+        let fid = fileId;
+        let tn = n;
+        if (!fid) {
+          const ent = videoIndex.readEntry(id);
+          if (ent && ent.fileId) {
+            fid = String(ent.fileId);
+            tn = ent.thumbnail != null ? ent.thumbnail : tn;
+          }
+        }
+        if (fid) thumbCache.enqueueOfficialThumb(id, fid, tn);
+      }
       if (!img || !img.buf) {
         // 2026-09-04：缺封面不要回 JSON。用户原话「前端正常刷新封面了，刷新又没了」。
         // 【原代码】sendJson(res, 404, { ok: false, error: "无封面" })
@@ -352,6 +363,15 @@ const server = http.createServer(async (req, res) => {
     if (method === "GET" && pathname === "/api/index") {
       const c = cfg.readConfig();
       const catalog = videoIndex.listCatalog(c.downloadPath);
+      const videos = catalog && catalog.videos ? catalog.videos : {};
+      const miss = [];
+      for (const [vid, e] of Object.entries(videos)) {
+        if (!vid || !e || !e.fileId) continue;
+        if (thumbCache.hasThumb(vid)) continue;
+        miss.push({ id: vid, fileId: e.fileId, thumbnail: e.thumbnail });
+        if (miss.length >= 80) break;
+      }
+      if (miss.length) thumbCache.prefetchOfficialFromList(miss);
       return sendJson(res, 200, Object.assign({ ok: true }, catalog));
     }
     if (method === "GET" && pathname === "/api/play-info") {

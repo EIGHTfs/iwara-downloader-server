@@ -335,7 +335,7 @@ try {
       // 首次加载用普通 URL（浏览器缓存），切换视频后用时间戳刷新
       var src = v.id ? "/api/thumb?id=" + encodeURIComponent(v.id) : "";
       item.innerHTML =
-        (src ? '<img class="thumb" data-vid="' + esc(v.id) + '" src="' + esc(src) + '" alt="" loading="lazy" onerror="this.dataset.miss=1" onload="this.style.visibility=\'visible\';this.dataset.miss=\'\'">' : '<div class="thumb"></div>') +
+        (src ? '<img class="thumb" data-vid="' + esc(v.id) + '" src="' + esc(src) + '" alt="" loading="lazy">' : '<div class="thumb"></div>') +
         '<div class="info">' +
           '<div class="title" title="' + esc(v.title) + '">' + esc(v.title) + '</div>' +
           '<div class="meta">' + esc(v.name) + (v.duration ? " · " + dur(v.duration) : "") + '</div>' +
@@ -343,6 +343,8 @@ try {
       item.onclick = (function (vid) {
         return function () { if (vid !== id) { setPlayUrl(vid, false); loadVideo(vid); } };
       })(v.id);
+      var imgEl = item.querySelector("img.thumb[data-vid]");
+      if (imgEl) bindPlaylistThumbRetry(imgEl, v.id);
       container.appendChild(item);
     }
     displayedCount = end;
