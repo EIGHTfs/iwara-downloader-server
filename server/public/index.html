@@ -82,7 +82,8 @@ try {
         <button id="resumeBtn" type="button" disabled>继续</button>
         <button id="stopBtn" type="button" disabled class="danger">终止</button>
         <button id="retryBtn" type="button" disabled class="ghost">重试失败</button>
-        <button id="removeCompletedBtn" type="button" disabled class="ghost">手动移除完成项</button>
+        <button id="clearFailBtn" type="button" class="ghost" title="从列表拿掉当前失败项（不删文件）">清除失败</button>
+        <button id="clearDoneBtn" type="button" class="ghost" title="从列表拿掉已完成项（不删文件）">清除完成</button>
       </div>
       <div class="progress-wrap mt">
         <div class="progress-bar"><div class="progress-fill" id="progressFill" style="width:0%"></div></div>
@@ -158,7 +159,7 @@ try {
           <input type="text" id="set-fileNameTemplate" placeholder="Iwara_-_{TITLE}_[{ID}]_[{QUALITY}]" style="width:100%">
         </label>
       </div>
-      <p class="hint" style="margin-top:8px">可用变量：<code>{TITLE}</code> 标题　<code>{ALIAS}</code> 作者显示名　<code>{AUTHOR}</code> 作者用户名　<code>{ID}</code> 视频 id　<code>{QUALITY}</code> 清晰度（Source / 540 / 360）　<code>{UPLOADTIME}</code> 上传时间　<code>{NOWTIME}</code> 下载时的当前时间</p>
+      <p class="hint" style="margin-top:8px">必须含 <code>{ID}</code>：封面 <code>&lt;id&gt;.jpg</code>、json、视频文件都靠这个 id 对上。其它变量：<code>{TITLE}</code> 标题　<code>{ALIAS}</code> 作者显示名　<code>{AUTHOR}</code> 作者用户名　<code>{QUALITY}</code> 清晰度　<code>{UPLOADTIME}</code> 上传时间　<code>{NOWTIME}</code> 下载时间</p>
       <div class="row mt">
         <label>作者子目录
           <select id="set-useAuthorSubdir">
@@ -181,6 +182,13 @@ try {
       <div class="row mt">
         <label><input type="checkbox" id="set-autoFollow"> 下载视频时自动关注作者</label>
       </div>
+
+    <div class="card">
+      <h2>播放</h2>
+      <div class="row">
+        <label><input type="checkbox" id="set-playPublic" checked> 视频播放公开（选中 = 免登录播放，不选 = 需服务端登录）</label>
+      </div>
+    </div>
     </div>
 
     <div class="card">
@@ -291,6 +299,7 @@ try {
 <!-- 2026-09-01 保存设置悬浮按钮（右下角，仅设置页显示） -->
 <button id="saveSettingsFab" type="button" title="保存设置">💾</button>
 
+<script src="search-date-range.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

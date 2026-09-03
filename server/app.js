@@ -16,9 +16,11 @@ const auth = require("./auth");
 const api = require("./lib/iwara-api");
 const downloader = require("./lib/downloader");
 const search = require("./lib/search-cache");
+const searchDateRange = require("./lib/search-date-range.cjs");
 const dataBackup = require("./lib/data-backup");
 const videoIndex = require("./lib/video-index");
 const deviceCheck = require("./lib/device-check");
+const thumbCache = require("./lib/thumb-cache.cjs");
 
 const PUBLIC_DIR = path.join(__dirname, "public");
 const MIME = {
@@ -299,31 +301,43 @@ const server = http.createServer(async (req, res) => {
       });
       return res.end(buf);
     }
-    if (method === "GET" && pathname === "/api/thumb") {
+    if ((method === "GET" || method === "HEAD") && pathname === "/api/thumb") {
+      const id = String(parsed.query.id || "").trim();
       const fileId = String(parsed.query.file || "").trim();
       const n = String(parsed.query.n || "0");
-      if (!fileId) return sendJson(res, 400, { ok: false, error: "缺 file" });
-      try {
-        const img = await api.fetchThumbnail(fileId, n);
-        res.writeHead(200, {
-          "Content-Type": img.contentType,
-          "Content-Length": img.buf.length,
-          "Cache-Control": "public, max-age=86400"
-        });
-        return res.end(img.buf);
-      } catch (e) {
-        return sendJson(res, 404, { ok: false, error: String(e.message || e) });
+      // 前台直接读缓存：请求路径不抽帧。缺图时后台补，这次 404。
+      let img = id ? thumbCache.readThumb(id) : null;
+      if (!img && fileId) {
+        try {
+          const remote = await api.fetchThumbnail(fileId, n);
+          if (remote && remote.buf) {
+            if (id) thumbCache.writeThumb(id, remote.buf);
+            img = remote;
+          }
+        } catch (_) {}
       }
+      if (!img || !img.buf) return sendJson(res, 404, { ok: false, error: "无封面" });
+      res.writeHead(200, {
+        "Content-Type": img.contentType || "image/jpeg",
+        "Content-Length": img.buf.length,
+        "Cache-Control": "public, max-age=86400"
+      });
+      return res.end(method === "HEAD" ? undefined : img.buf);
     }
 
     // 本地播放免登录：列表/元数据/视频流只读 config.downloadPath 本机文件，不走 Iwara 在线
     if (method === "GET" && pathname === "/api/index") {
       const c = cfg.readConfig();
-      return sendJson(res, 200, Object.assign({ ok: true }, videoIndex.listCatalog(c.downloadPath)));
+      const catalog = videoIndex.listCatalog(c.downloadPath);
+      return sendJson(res, 200, Object.assign({ ok: true }, catalog));
     }
     if (method === "GET" && pathname === "/api/play-info") {
       const id = String(parsed.query.id || "").trim();
       if (!id) return sendJson(res, 400, { ok: false, error: "缺 id" });
+      // 2026-09-03 用户原话：「视频播放公开 选中就播放视频无密码，默认选中否则需服务端是登录状态」
+      // AI 思路：playPublic=true（默认）免登录播放；playPublic=false 时需登录
+      //   未设密码（!passwordHash）= 始终公开（无密码可登）
+      { const _c = cfg.readConfig(); if (!_c.playPublic && _c.passwordHash && !requireAuth(req)) return sendJson(res, 401, { ok: false, error: "未登录" }); }
       const c = cfg.readConfig();
       const hint = playHint(id);
       const found = videoIndex.findPlayable(c.downloadPath, id, hint.savePath);
@@ -353,6 +367,8 @@ const server = http.createServer(async (req, res) => {
     if ((method === "GET" || method === "HEAD") && pathname === "/api/play") {
       const id = String(parsed.query.id || "").trim();
       if (!id) return sendJson(res, 400, { ok: false, error: "缺 id" });
+      // 2026-09-03 playPublic 检查（同 /api/play-info）
+      { const _c = cfg.readConfig(); if (!_c.playPublic && _c.passwordHash && !requireAuth(req)) return sendJson(res, 401, { ok: false, error: "未登录" }); }
       const c = cfg.readConfig();
       const hint = playHint(id);
       const found = videoIndex.findPlayable(c.downloadPath, id, hint.savePath);
@@ -409,7 +425,8 @@ const server = http.createServer(async (req, res) => {
           if (parsed.accessToken) body.iwaraAccessToken = parsed.accessToken;
         }
       }
-      const allowed = ["iwaraCookie", "iwaraToken", "iwaraAccessToken", "downloadBackend", "concurrency", "aria2Path", "aria2Token", "downloadPath", "fileNameTemplate", "useAuthorSubdir", "showLikedInSearch", "autoLike", "autoFollow", "sessionHours", "port", "checkDownloadLink", "iwaraCfgIp", "aria2Dns", "downloadToggles"];
+      const allowed = ["iwaraCookie", "iwaraToken", "iwaraAccessToken", "downloadBackend", "concurrency", "aria2Path", "aria2Token", "downloadPath", "fileNameTemplate", "useAuthorSubdir", "showLikedInSearch", "autoLike", "autoFollow", "sessionHours", "port", "checkDownloadLink", "iwaraCfgIp", "aria2Dns", "downloadToggles", "playPublic"];
+      const oldDownloadPath = c.downloadPath;
       for (const k of allowed) {
         if (body[k] === undefined) continue;
         if ((k === "iwaraCookie" || k === "iwaraToken" || k === "iwaraAccessToken" || k === "aria2Token") && String(body[k]).trim() === "") continue;
@@ -422,12 +439,19 @@ const server = http.createServer(async (req, res) => {
           continue;
         }
         if (k === "fileNameTemplate") {
-          c[k] = String(body[k] || "").trim().replace(/\.(mp4|webm|mov)$/i, "") || "Iwara_-_{TITLE}_[{ID}]_[{QUALITY}]";
+          const t = String(body[k] || "").trim().replace(/\.(mp4|webm|mov|mkv|m4v)$/i, "");
+          if (!cfg.templateHasId(t)) {
+            return sendJson(res, 400, { ok: false, error: "文件名模板必须含 {ID}，封面和 json 靠这个 id 对视频" });
+          }
+          c[k] = t;
           continue;
         }
         c[k] = body[k];
       }
       cfg.writeConfig(c);
+      if (c.downloadPath && String(c.downloadPath) !== String(oldDownloadPath)) {
+        thumbCache.warmupAll(c.downloadPath);
+      }
       return sendJson(res, 200, { ok: true, settings: publicSettings(cfg.readConfig()), parsedFromText: !!parseCredentialText(typeof body.iwaraCookie === "string" ? body.iwaraCookie : "") });
     }
     if (method === "POST" && pathname === "/api/change-password") {
@@ -523,17 +547,16 @@ const server = http.createServer(async (req, res) => {
     // ---- 按时间搜索 / 搜索记录 ----
     if (method === "POST" && pathname === "/api/search") {
       const body = await readBody(req);
-      const startTs = Math.floor(new Date(body.startDate + "T00:00:00").getTime() / 1000);
-      const endTs = Math.floor(new Date(body.endDate + "T00:00:00").getTime() / 1000) + 86400;
-      if (isNaN(startTs) || isNaN(endTs)) return sendJson(res, 400, { ok: false, error: "日期格式无效" });
+      const range = searchDateRange.resolveRange(body.startDate, body.endDate);
+      if (!range.ok) return sendJson(res, 400, { ok: false, error: range.error });
       const contentFilter = Array.isArray(body.contentFilter) && body.contentFilter.length ? body.contentFilter : ["normal", "nsfw"];
       try {
         const t = await search.startSearchTask({
-          startDate: body.startDate,
-          endDate: body.endDate,
+          startDate: range.startDate,
+          endDate: range.endDate,
           contentFilter,
-          startTs,
-          endTs,
+          startTs: range.startTs,
+          endTs: range.endTs,
           user: String(body.user || "")
         });
         return sendJson(res, 200, { ok: true, started: true, task: t });
@@ -676,10 +699,17 @@ const server = http.createServer(async (req, res) => {
     if (method === "POST" && pathname === "/api/task/pause") { return sendJson(res, 200, { ok: true, status: downloader.pauseTask() }); }
     if (method === "POST" && pathname === "/api/task/resume") { return sendJson(res, 200, { ok: true, status: downloader.resumeTask() }); }
     if (method === "POST" && pathname === "/api/task/stop") { return sendJson(res, 200, { ok: true, status: downloader.stopTask() }); }
-    if (method === "POST" && pathname === "/api/task/retry") { return sendJson(res, 200, { ok: true, retried: downloader.retryFailed() }); }
-    // 2026-09-03：并发只在设置页改（POST /api/settings）；进度页不再调 /api/task/concurrency
+    if (method === "POST" && pathname === "/api/task/retry") {
+      const body = await readBody(req);
+      const id = String((body && body.id) || parsed.query.id || "").trim();
+      return sendJson(res, 200, { ok: true, retried: downloader.retryFailed(id) });
+    }
+    // 并发只在设置页改（POST /api/settings）；进度页不再调 /api/task/concurrency
     if (method === "POST" && pathname === "/api/task/remove-completed") {
       return sendJson(res, 200, downloader.removeCompleted());
+    }
+    if (method === "POST" && pathname === "/api/task/clear-failed") {
+      return sendJson(res, 200, downloader.clearFailed());
     }
     if (method === "POST" && pathname === "/api/task/remove-item") {
       const body = await readBody(req);
@@ -739,5 +769,7 @@ const server = http.createServer(async (req, res) => {
     console.log(`  局域网访问: http://<本机IP>:${finalPort}`);
     if (!cfg.hasPassword()) console.log('  ⚠️ 未设置密码！可运行: node app.js --set-password "你的密码"');
     console.log("==============================================");
+    // 封面后台扫完抽帧，前台只读 thumbs/。不挡 listen。
+    if (cfgNow.downloadPath) thumbCache.warmupAll(cfgNow.downloadPath);
   });
 })();

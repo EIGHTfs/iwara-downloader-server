@@ -152,25 +152,42 @@ function bindProgress() {
     if (r && r.ok) showFeedback("已重试失败项", "ok");
     else showFeedback((r && r.error) || "重试失败", "err");
   });
-  const rmBtn = $("#removeCompletedBtn");
-  if (rmBtn) {
-    rmBtn.addEventListener("click", async () => {
+  const clearFailBtn = $("#clearFailBtn");
+  if (clearFailBtn) {
+    clearFailBtn.addEventListener("click", async () => {
+      const r = await api("/api/task/clear-failed", "POST", {});
+      if (r && r.ok) showFeedback("已清除失败 " + (r.removed || 0) + " 项（文件仍在）", "ok");
+      else showFeedback((r && r.error) || "清除失败", "err");
+    });
+  }
+  const clearDoneBtn = $("#clearDoneBtn");
+  if (clearDoneBtn) {
+    clearDoneBtn.addEventListener("click", async () => {
       const r = await api("/api/task/remove-completed", "POST", {});
-      if (r && r.ok) showFeedback("已从列表移除 " + (r.removed || 0) + " 项（文件仍在）", "ok");
-      else showFeedback((r && r.error) || "移除失败", "err");
+      if (r && r.ok) showFeedback("已清除完成 " + (r.removed || 0) + " 项（文件仍在）", "ok");
+      else showFeedback((r && r.error) || "清除失败", "err");
     });
   }
   const list = $("#taskList");
   if (list && !list._rmBound) {
     list._rmBound = true;
     list.addEventListener("click", async (ev) => {
-      const btn = ev.target && ev.target.closest && ev.target.closest("button.rm-item");
-      if (!btn) return;
-      const id = btn.getAttribute("data-id");
+      const retryBtn = ev.target && ev.target.closest && ev.target.closest("button.mm-retry-btn");
+      if (retryBtn) {
+        const id = retryBtn.getAttribute("data-id");
+        if (!id) return;
+        const r = await api("/api/task/retry", "POST", { id });
+        if (r && r.ok) showFeedback("已重试", "ok");
+        else showFeedback((r && r.error) || "重试失败", "err");
+        return;
+      }
+      const skipBtn = ev.target && ev.target.closest && ev.target.closest("button.mm-skip-btn");
+      if (!skipBtn) return;
+      const id = skipBtn.getAttribute("data-id");
       if (!id) return;
       const r = await api("/api/task/remove-item", "POST", { id });
-      if (r && r.ok) showFeedback("已从列表移除（文件仍在）", "ok");
-      else showFeedback((r && r.error) || "移除失败", "err");
+      if (r && r.ok) showFeedback("已跳过（文件仍在）", "ok");
+      else showFeedback((r && r.error) || "跳过失败", "err");
     });
   }
   startTaskPoll();
@@ -203,7 +220,8 @@ function renderTask(task) {
     $("#resumeBtn").disabled = true;
     $("#stopBtn").disabled = true;
     $("#retryBtn").disabled = true;
-    if ($("#removeCompletedBtn")) $("#removeCompletedBtn").disabled = true;
+    if ($("#clearFailBtn")) $("#clearFailBtn").disabled = true;
+    if ($("#clearDoneBtn")) $("#clearDoneBtn").disabled = true;
     return;
   }
   const items = task.items || [];
@@ -217,7 +235,8 @@ function renderTask(task) {
   $("#resumeBtn").disabled = task.status !== "paused";
   $("#stopBtn").disabled = task.status === "idle";
   $("#retryBtn").disabled = failN === 0;
-  if ($("#removeCompletedBtn")) $("#removeCompletedBtn").disabled = doneN === 0;
+  if ($("#clearFailBtn")) $("#clearFailBtn").disabled = failN === 0;
+  if ($("#clearDoneBtn")) $("#clearDoneBtn").disabled = doneN === 0;
 
   const now = Date.now();
   const listHtml = [];
@@ -240,21 +259,28 @@ function renderTask(task) {
         : (it.state === "done" || it.state === "skipped" || it.state === "submitted" ? "row-bar-ok" : "row-bar-pending"));
     const p = Math.max(0, Math.min(100, it.progress || 0));
     const displayName = it.file || it.title || it.id;
-    const meta = [it.title && it.title !== displayName ? it.title : "", it.author, speedStr, it.error].filter(Boolean).join(" · ");
-    const play = it.id
-      ? `<a class="play-btn" href="/play.html?id=${encodeURIComponent(it.id)}" target="_blank" rel="noopener" title="本地播放（未下完也可播已缓存部分）">▶</a>`
-      : "";
-    const rm = it.id
-      ? `<button type="button" class="rm-item" data-id="${esc(it.id)}" title="从列表移除（不删文件）">×</button>`
-      : "";
+    // 文件名模板已含标题，后面不再重复标题，只显示作者
+    const meta = [it.author, speedStr, it.error].filter(Boolean).join(" · ");
+    const thumb = it.id
+      ? `<img class="row-thumb" src="/api/thumb?id=${encodeURIComponent(it.id)}" alt="" loading="lazy" onerror="this.style.display='none'">`
+      : `<div class="row-thumb"></div>`;
+    let actBtns = "";
+    if (it.id) {
+      actBtns += `<a class="mm-play-btn" href="/play.html?id=${encodeURIComponent(it.id)}" target="_blank" rel="noopener" title="本地播放">▶ 播放</a>`;
+    }
+    if (it.id && (it.state === "failed" || it.state === "error")) {
+      actBtns += `<button type="button" class="mm-retry-btn" data-id="${esc(it.id)}" title="重试下载此视频">🔄 重试</button>` +
+        `<button type="button" class="mm-skip-btn" data-id="${esc(it.id)}" title="从列表拿掉（不删文件）">🚫 跳过</button>`;
+    } else if (it.id && (it.state === "done" || it.state === "skipped" || it.state === "submitted")) {
+      actBtns += `<button type="button" class="mm-skip-btn" data-id="${esc(it.id)}" title="从列表拿掉（不删文件）">🚫 跳过</button>`;
+    }
     const row = `<div class="item ${cls}">
-      ${play}
-      ${rm}
+      ${thumb}
       <span class="icon">${icon}</span>
       <span class="item-name">${esc(displayName)}
         <span class="row-bar ${barCls}"><span class="row-bar-fill" style="width:${p}%"></span></span>
       </span>
-      <span class="status-text">${esc(it.state || "")} ${p}% ${esc(speedStr)} ${fmtSize(it.doneBytes)}${it.total ? " / " + fmtSize(it.total) : ""}<br>${esc(meta)}</span>
+      <span class="status-text">${esc(it.state || "")} ${p}% ${esc(speedStr)} ${fmtSize(it.doneBytes)}${it.total ? " / " + fmtSize(it.total) : ""}${actBtns}<br>${esc(meta)}</span>
     </div>`;
     listHtml.push(row);
   }
@@ -289,13 +315,23 @@ function applyRatingFilter(list) {
 }
 
 function bindSearch() {
-  const now = new Date();
-  const d30 = new Date(now.getTime() - 30 * 86400000);
-  if ($("#searchEnd")) $("#searchEnd").value = localDate(now);
-  if ($("#searchStart")) $("#searchStart").value = localDate(d30);
+  // 开始和结束都默认今天（bindInputs 内部也会兜底，这里提前填好防闪烁）
+  const today = (window.SearchDateRange && SearchDateRange.todayYmd()) || localDate(new Date());
+  if ($("#searchStart") && !$("#searchStart").value) $("#searchStart").value = today;
+  if ($("#searchEnd") && !$("#searchEnd").value) $("#searchEnd").value = today;
+  if (window.SearchDateRange && $("#searchStart") && $("#searchEnd")) {
+    SearchDateRange.bindInputs($("#searchStart"), $("#searchEnd"), function () {
+      setStatus($("#searchStatus"), "已自动修正日期范围");
+    });
+  }
 
   $("#earliestBtn").addEventListener("click", () => {
-    $("#searchStart").value = "2000-01-01";
+    $("#searchStart").value = (window.SearchDateRange && SearchDateRange.EARLIEST) || "2000-01-01";
+    if (window.SearchDateRange && $("#searchEnd")) {
+      const r = SearchDateRange.enforceDateRules($("#searchStart").value, $("#searchEnd").value);
+      $("#searchStart").value = r.startDate;
+      $("#searchEnd").value = r.endDate;
+    }
     setStatus($("#searchStatus"), "开始日期已设为最早（2000-01-01）");
   });
 
@@ -310,9 +346,14 @@ function bindSearch() {
   if ($("#filterNsfw")) $("#filterNsfw").addEventListener("change", () => { renderSearchResults(); });
 
   $("#searchBtn").addEventListener("click", async () => {
-    const startDate = $("#searchStart").value;
-    const endDate = $("#searchEnd").value;
-    if (!startDate || !endDate) { setStatus($("#searchStatus"), "请选择日期范围", "err"); return; }
+    const range = window.SearchDateRange
+      ? SearchDateRange.enforceDateRules($("#searchStart").value, $("#searchEnd").value)
+      : { startDate: $("#searchStart").value || "2000-01-01", endDate: $("#searchEnd").value };
+    if ($("#searchStart")) $("#searchStart").value = range.startDate;
+    if ($("#searchEnd")) $("#searchEnd").value = range.endDate;
+    const startDate = range.startDate || "2000-01-01";
+    const endDate = range.endDate;
+    if (!endDate) { setStatus($("#searchStatus"), "请选择结束日期", "err"); return; }
     const contentFilter = [];
     if ($("#filterNormal").checked) contentFilter.push("normal");
     if ($("#filterNsfw").checked) contentFilter.push("nsfw");
@@ -546,11 +587,15 @@ function normalizeUserRow(u) {
 }
 
 function thumbSrc(v) {
+  const id = videoId(v);
   const fileId = v && v.file && v.file.id;
-  if (fileId) {
-    const n = Number.isFinite(Number(v.thumbnail)) ? Number(v.thumbnail) : 0;
-    return "/api/thumb?file=" + encodeURIComponent(fileId) + "&n=" + n;
+  const n = Number.isFinite(Number(v.thumbnail)) ? Number(v.thumbnail) : 0;
+  if (id) {
+    let u = "/api/thumb?id=" + encodeURIComponent(id);
+    if (fileId) u += "&file=" + encodeURIComponent(fileId) + "&n=" + n;
+    return u;
   }
+  if (fileId) return "/api/thumb?file=" + encodeURIComponent(fileId) + "&n=" + n;
   if (v && typeof v.thumbnailUrl === "string" && v.thumbnailUrl.indexOf("/api/thumb") === 0) return v.thumbnailUrl;
   return "";
 }
@@ -740,6 +785,8 @@ function fillSettings(s) {
   if ($("#set-showLikedInSearch")) $("#set-showLikedInSearch").checked = settings.showLikedInSearch !== false;
   if ($("#set-autoLike")) $("#set-autoLike").checked = !!settings.autoLike;
   if ($("#set-autoFollow")) $("#set-autoFollow").checked = !!settings.autoFollow;
+  // 2026-09-03 playPublic：默认 true（免登录播放）
+  if ($("#set-playPublic")) $("#set-playPublic").checked = settings.playPublic !== false;
   $("#set-downloadBackend").value = settings.downloadBackend || "direct";
   $("#set-concurrency").value = settings.concurrency || 3;
   const tog = settings.downloadToggles || {};
@@ -809,17 +856,31 @@ function bindSettings() {
     aria2Input.addEventListener("blur", () => checkAria2Device(aria2Input.value));
     aria2Input.addEventListener("input", () => checkAria2Device(aria2Input.value));
   }
+  const tplEl = $("#set-fileNameTemplate");
+  if (tplEl) {
+    tplEl.addEventListener("input", () => {
+      const ok = tplEl.value.indexOf("{ID}") >= 0;
+      tplEl.style.outline = ok ? "" : "2px solid var(--fail)";
+    });
+  }
   // 2026-09-01 保存设置改悬浮按钮（右下角 💾，仅设置页显示；反馈改 toast）
   const saveFab = $("#saveSettingsFab");
   if (saveFab) saveFab.addEventListener("click", async () => {
     try {
+      const tpl = $("#set-fileNameTemplate").value.trim().replace(/\.(mp4|webm|mov|mkv|m4v)$/i, "");
+      if (tpl.indexOf("{ID}") < 0) {
+        showToast("文件名模板必须含 {ID}", "err");
+        setStatus($("#settingsStatus"), "文件名模板必须含 {ID}，封面和 json 靠这个 id 对视频", "err");
+        return;
+      }
       const body = {
         downloadPath: $("#set-downloadPath").value.trim(),
-        fileNameTemplate: $("#set-fileNameTemplate").value.trim().replace(/\.(mp4|webm|mov)$/i, ""),
+        fileNameTemplate: tpl,
         useAuthorSubdir: $("#set-useAuthorSubdir").value === "true",
         showLikedInSearch: $("#set-showLikedInSearch") ? $("#set-showLikedInSearch").checked : true,
         autoLike: $("#set-autoLike") ? $("#set-autoLike").checked : false,
         autoFollow: $("#set-autoFollow") ? $("#set-autoFollow").checked : false,
+        playPublic: $("#set-playPublic") ? $("#set-playPublic").checked : true,
         downloadBackend: $("#set-downloadBackend").value,
         concurrency: parseInt($("#set-concurrency").value, 10) || 3,
         downloadToggles: {

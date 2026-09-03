@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+HERE="$(cd "$(dirname "$0")" && pwd)"
+export LD_LIBRARY_PATH="$HERE/ffmpeg-lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+if [ -x "$HERE/ffmpeg-bin" ] && "$HERE/ffmpeg-bin" -hide_banner -version >/dev/null 2>&1; then
+  exec "$HERE/ffmpeg-bin" "$@"
+fi
+# PATH 里有 tool/ 时，裸 ffmpeg 会再进本脚本死循环。群晖走系统绝对路径。
+for c in /usr/bin/ffmpeg /usr/local/bin/ffmpeg /opt/bin/ffmpeg; do
+  if [ -x "$c" ]; then exec "$c" "$@"; fi
+done
+echo "ffmpeg not found" >&2
+exit 127

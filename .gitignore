@@ -7,6 +7,7 @@ server/search_task.json
 server/cdn_hosts_state.json
 server/following_cache.json
 server/iwara-index.json
+server/thumbs/
 server/app.pid
 server/*.log
 server/*.bak-*
@@ -30,9 +31,12 @@ server/*.bak-*
 .github-credentials
 git_push_token.txt
 
-# 自带 Node 运行时
+# 自带运行时（包装脚本入库，二进制/so 不入库）
 tool/node/
 tool/node-*.tar.xz
+tool/ffmpeg-bin
+tool/ffprobe-bin
+tool/ffmpeg-lib/
 
 # 零依赖：不写 package.json / lock
 package.json

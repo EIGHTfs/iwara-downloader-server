@@ -293,11 +293,11 @@ try {
       const v = allVideos[i];
       const item = document.createElement("div");
       item.className = "playlist-item" + (v.id === id ? " active" : "");
-      const thumbSrc = v.fileId
-        ? "/api/thumb?file=" + encodeURIComponent(v.fileId) + "&n=0"
-        : "data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 80 45%22%3E%3Crect fill=%22%23333%22 width=%2280%22 height=%2245%22/%3E%3Ctext x=%2240%22 y=%2226%22 text-anchor=%22middle%22 fill=%22%23666%22 font-size=%2214%22%3E▶%3C/text%3E%3C/svg%3E";
+      const thumbSrc = v.id
+        ? "/api/thumb?id=" + encodeURIComponent(v.id)
+        : "";
       item.innerHTML =
-        '<img class="thumb" src="' + esc(thumbSrc) + '" alt="" loading="lazy">' +
+        (thumbSrc ? '<img class="thumb" src="' + esc(thumbSrc) + '" alt="" onerror="this.style.visibility=\'hidden\'">' : '<div class="thumb"></div>') +
         '<div class="info">' +
           '<div class="title" title="' + esc(v.title) + '">' + esc(v.title) + "</div>" +
           '<div class="meta">' + esc(v.name) + (v.duration ? " · " + dur(v.duration) : "") + "</div>" +
@@ -350,8 +350,7 @@ try {
       if (j.createdAt) extra.push("上传 " + String(j.createdAt).slice(0, 10));
       extra.push("id " + id);
       $("#extra").textContent = extra.join(" · ");
-      const poster = j.fileId ? "/api/thumb?file=" + encodeURIComponent(j.fileId) + "&n=0" : "";
-      initPlayer(j, poster);
+      initPlayer(j, "/api/thumb?id=" + encodeURIComponent(id));
     })
     .catch(function (e) {
       $("#title").textContent = "无法播放";

@@ -23,6 +23,7 @@ DEFAULT_PORT=8643
 # ---------- Node 查找（tool/node Node24 > PATH 群晖套件 > PATH） ----------
 # 群晖 DSM 默认 PATH 没有 node；项目 tool/node 放官方 Node 24（CF 只放行 Node24 指纹）
 export PATH="$ROOT/tool/node/bin:/usr/local/bin:/var/packages/Node.js_v24/target/usr/local/bin:/var/packages/Node.js_v22/target/usr/local/bin:/var/packages/Node.js_v20/target/usr/local/bin:$PATH"
+export FFMPEG="${FFMPEG:-$ROOT/tool/ffmpeg}"
 find_node() {
   for c in \
     "$ROOT/tool/node/bin/node" \

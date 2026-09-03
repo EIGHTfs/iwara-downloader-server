@@ -399,9 +399,55 @@ function importPayload(root, raw) {
   return { ok: true, added: r.added, updated: r.updated, count: Object.keys(map).length };
 }
 
+// ═══════════════════════════════════════════════════════════════
+// listCatalog：视频列表 = JSON 文件里有的 ID + 视频文件必须存在
+// ═══════════════════════════════════════════════════════════════
+// 用户原话：「扫描设置的下载路径下所有 json 文件取到 id 用 id 去匹配封面，视频。
+//   不管视频名怎么变只要 id 对的上就能找到，找不到的视频直接不显示在视频列表」
+//
+// AI 思路：之前 listCatalog 直接读 iwara-index.json 总表返回，
+//   不验证视频文件是否存在——总表有 ID 但视频被删/改名/没下完照样显示，点开播不了。
+//   现在改为：① 扫下载目录所有 JSON → ② 解析出 ID → ③ 用 ID 找视频文件 → ④ 没视频跳过。
+//   视频文件名任意变，只要文件名含 [id] 就能匹配（findExistingById）。
+// ═══════════════════════════════════════════════════════════════
 function listCatalog(root) {
-  const videos = loadCatalogMap(root);
-  return { count: Object.keys(videos).length, videos };
+  // 总表兜底：下载中的视频还没有 sidecar JSON，靠总表取元数据
+  const catalogMap = loadCatalogMap(root);
+  const result = {};
+
+  // ① 扫下载目录所有 JSON 文件，解析出 { [id]: entry }
+  const jsonFiles = [];
+  if (root && fs.existsSync(root)) walkJsonFiles(root, jsonFiles, 0);
+  const dataDirResolved = path.resolve(DATA_DIR);
+  for (const jf of jsonFiles) {
+    // 跳过总表文件本身（避免重复）
+    if (path.resolve(jf) === path.resolve(catalogPath(root)) ||
+        path.resolve(jf) === path.resolve(path.join(dataDirResolved, CATALOG_NAME))) continue;
+    const raw = readJson(jf);
+    const entries = parseIndexPayload(raw);
+    for (const [id, entry] of Object.entries(entries)) {
+      if (!id || !entry || result[id]) continue;
+      // ② 用 ID 找视频文件：文件名含 [id] 的 mp4/webm/mkv/mov/m4v 或 .part
+      const videoFile = findExistingById(root, id);
+      if (!videoFile) {
+        // 没视频 → 跳过，不显示在列表
+        // 用户原话：「找不到的视频直接不显示在视频列表」
+        continue;
+      }
+      // ③ 有视频 → 用 sidecar 元数据，总表兜底补充
+      result[id] = Object.assign({}, catalogMap[id] || {}, entry);
+    }
+  }
+
+  // ④ 总表里有但 JSON 里没扫到的（edge case：只有总表没有 sidecar），也检查视频是否存在
+  for (const [id, entry] of Object.entries(catalogMap)) {
+    if (result[id]) continue;
+    const videoFile = findExistingById(root, id);
+    if (!videoFile) continue;
+    result[id] = entry;
+  }
+
+  return { count: Object.keys(result).length, videos: result };
 }
 
 function hasVideo(root, id) {

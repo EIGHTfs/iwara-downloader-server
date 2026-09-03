@@ -20,6 +20,7 @@ const cfg = require("../config");
 const api = require("./iwara-api");
 const videoIndex = require("./video-index");
 const deviceCheck = require("./device-check");
+const thumbCache = require("./thumb-cache.cjs");
 
 const DATA_DIR = process.env.GBMD_DATA_DIR || __dirname;
 const TASK_FILE = path.join(DATA_DIR, "..", "download_task.json");
@@ -131,6 +132,9 @@ function applyParsedName(item, info, c) {
   if (info.author) item.author = info.author;
   if (info.alias) item.alias = info.alias;
   if (info.quality) item.quality = info.quality;
+  const fid = thumbCache.fileIdOf(info);
+  if (fid) item.fileId = fid;
+  thumbCache.ensureFromInfo(item.id, info, item.savePath).catch(() => null);
   item.file = applyFileNameTemplate((c && c.fileNameTemplate) || "", {
     title: info.title || item.title,
     alias: info.alias || "",
@@ -156,13 +160,15 @@ function applyFileNameTemplate(template, info) {
     UPLOADTIME: fmtDT(upload),
     NOWTIME: fmtDT(now)
   };
-  let name = template || "Iwara_-_{TITLE}_[{ID}]_[{QUALITY}]";
+  let name = cfg.normalizeFileNameTemplate(template);
   for (const k of Object.keys(vars)) {
     name = name.split(`{${k}}`).join(vars[k]);
   }
   name = sanitizeFileName(name);
-  name = name.replace(/\.(mp4|webm|mov)$/i, "");
-  if (!name) name = sanitizeFileName(info.id || "unnamed");
+  name = name.replace(/\.(mp4|webm|mov|mkv|m4v)$/i, "");
+  const vid = String(info.id || "").trim();
+  if (vid && name.indexOf(vid) < 0) name += "_[" + vid + "]";
+  if (!name) name = sanitizeFileName(vid || "unnamed");
   return name + ".mp4";
 }
 
@@ -541,6 +547,7 @@ async function runDownloadLoop() {
         item.savePath = existing;
         if (!item.title || item.title === item.id) item.title = item.file.replace(/\.(mp4|webm|mov|mkv)$/i, "");
         markSkipped(item, "文件已存在，跳过");
+        thumbCache.ensureThumb(item.id, { filePath: existing }).catch(() => null);
       } else if (c.downloadBackend === "aria2" && await aria2AlreadyHas(item.id, item.file)) {
         markSkipped(item, "Aria2 已有此文件，跳过");
       } else if (c.downloadBackend === "aria2") {
@@ -608,6 +615,7 @@ async function runDownloadLoop() {
             item.doneBytes = item.total || 0;
             task.completed++;
             if (toggles.json) await videoIndex.recordDownload(c.downloadPath, info, item);
+            await thumbCache.ensureFromInfo(item.id, info, item.savePath);
           }
         }
       }
@@ -758,9 +766,11 @@ function removeCompleted() {
   return { ok: true, removed: n, remaining: keep.length };
 }
 
-function retryFailed() {
+function retryFailed(id) {
+  const vid = String(id || "").trim();
   let n = 0;
   for (const it of task.items) {
+    if (vid && it.id !== vid) continue;
     if (it.state === "failed" || it.state === "error") {
       it.state = "pending";
       it.retries = 0;
@@ -779,12 +789,28 @@ function retryFailed() {
   return n;
 }
 
+function clearFailed() {
+  const keep = [];
+  let n = 0;
+  for (const it of task.items || []) {
+    if (it.state === "failed" || it.state === "error") {
+      n++;
+      continue;
+    }
+    keep.push(it);
+  }
+  task.items = keep;
+  task.failed = 0;
+  saveTask();
+  return { ok: true, removed: n, remaining: keep.length };
+}
+
 // 模块加载时恢复 CDN 子域成功/失败列表（从外部文件 cdn_hosts_state.json）
 cdnLoadState();
 
 module.exports = {
   getTask, restorePendingTask,
-  startDownloadTask, pauseTask, resumeTask, stopTask, setConcurrency, retryFailed, removeCompleted, removeItem,
+  startDownloadTask, pauseTask, resumeTask, stopTask, setConcurrency, retryFailed, removeCompleted, removeItem, clearFailed,
   sanitizeFileName, fmtSize,
   aria2AddIndexJson
 };

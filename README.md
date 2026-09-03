@@ -140,6 +140,7 @@ node server/app.js --set-password "你的密码"
 | `{NOWTIME}` | 当前时间 |
 
 默认：`Iwara_-_{TITLE}_[{ID}]_[{QUALITY}]`（不要写扩展名，落盘自动补 `.mp4`）  
+**必须含 `{ID}`**：封面 `server/thumbs/<id>.jpg`、sidecar json、视频文件都靠这个 id 对上。设置页保存时缺 `{ID}` 会拒绝。  
 例：`Iwara_-_耀佳音与知更鸟摇一摇_[ZsvQjWn9XNQvAy]_[Source].mp4`
 
 ---
@@ -200,6 +201,8 @@ aria2 进程自己做 DNS。若本机 DNS 污染 iwara 子域，需在 **aria2 �
 
 | 版本 | 内容 |
 |---|---|
+| 1.0.12 | 任务列表左侧封面；播放列表同一张图。后台 `tool/ffmpeg` 抽帧到 `server/thumbs/<id>.jpg`，前台只读。文件名模板必须含 `{ID}` |
+| 1.0.11 | 进度页按钮对齐香蕉网（清除失败/清除完成，行尾 ▶播放 🔄重试 🚫跳过）。按时间搜索抽 `search-date-range.js`：结束含当天到次日 0 点，结束不能晚于今天，开始晚于结束则结束跟着开始 |
 | 1.0.10 | **播放器铺满舞台**：`#player` 高度不再是 0（黑屏）；`.gitignore` 按运行态/产物/凭据分组 |
 | 1.0.9 | **本地播放免登录**：`play.html`、播放列表、`/api/play` 只读设置里的下载路径本机文件，不走 Iwara 在线、不要访问密码 |
 | 1.0.8 | **播放页继承同源登录**：`play.html` / 首页未登录服务端 302 到 `login.html?next=`，已登录则直接用 `Path=/` 的 session |

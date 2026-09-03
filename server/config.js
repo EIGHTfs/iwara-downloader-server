@@ -36,6 +36,7 @@ const DEFAULT_CONFIG = {
   // 文件名模板（学油猴脚本 downloadPath.ts 的变量替代，可自定义）：
   //   支持 {TITLE} {ALIAS} {ID} {AUTHOR} {QUALITY} {UPLOADTIME} {NOWTIME}
   //   例：Iwara_-_{TITLE}_[{ID}]_[{QUALITY}]  （不要写 .mp4）
+  //   必须含 {ID}：封面 thumbs/<id>.jpg、sidecar json、视频文件都靠网址里的 id 对上
   fileNameTemplate: "Iwara_-_{TITLE}_[{ID}]_[{QUALITY}]",
   // 文件名模板占位（保留原始文件名，仅作者子目录）：<root>/<作者>/<原名>
   useAuthorSubdir: false,
@@ -51,8 +52,23 @@ const DEFAULT_CONFIG = {
   // 网盘链接探测（预留，后续版本启用）
   checkDownloadLink: false,
   // 2026-09-03 用户原话：设置里选下载内容「视频 / json（自己生成的索引）」
+  // 2026-09-03 用户原话：设置里新增「视频播放公开」选中就播放视频无密码，默认选中
+  // AI 思路：选中 = playPublic true = /api/play 和 /api/play-info 免登录；不选 = 需要服务端登录
+  playPublic: true,
   downloadToggles: { video: true, json: true }
 };
+
+const DEFAULT_FILE_NAME_TEMPLATE = "Iwara_-_{TITLE}_[{ID}]_[{QUALITY}]";
+
+function templateHasId(t) {
+  return /\{ID\}/.test(String(t || ""));
+}
+
+function normalizeFileNameTemplate(raw) {
+  let t = String(raw || "").trim().replace(/\.(mp4|webm|mov|mkv|m4v)$/i, "");
+  if (!t || !templateHasId(t)) t = DEFAULT_FILE_NAME_TEMPLATE;
+  return t;
+}
 
 function normalizeDownloadToggles(raw) {
   const src = raw && typeof raw === "object" ? raw : {};
@@ -68,6 +84,7 @@ function readConfig() {
       const data = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8"));
       const merged = Object.assign({}, DEFAULT_CONFIG, data);
       merged.downloadToggles = normalizeDownloadToggles(data.downloadToggles);
+      merged.fileNameTemplate = normalizeFileNameTemplate(merged.fileNameTemplate);
       return merged;
     }
   } catch (e) {
@@ -114,4 +131,8 @@ function hasPassword() {
   return !!(cfg.passwordHash && cfg.passwordSalt);
 }
 
-module.exports = { readConfig, writeConfig, hashPassword, verifyPassword, setPassword, hasPassword, normalizeDownloadToggles, DEFAULT_CONFIG, CONFIG_FILE };
+module.exports = {
+  readConfig, writeConfig, hashPassword, verifyPassword, setPassword, hasPassword,
+  normalizeDownloadToggles, normalizeFileNameTemplate, templateHasId,
+  DEFAULT_FILE_NAME_TEMPLATE, DEFAULT_CONFIG, CONFIG_FILE
+};

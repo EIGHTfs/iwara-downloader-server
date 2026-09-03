@@ -14,5 +14,7 @@
     { "rel": "server/server.log",         "desc": "运行日志" },
     { "rel": "server/app.pid",            "desc": "进程 PID（启停脚本使用）" }
   ],
-  "dirs": []
+  "dirs": [
+    { "rel": "server/thumbs", "desc": "本机封面缓存（ffmpeg 抽帧，按视频 id.jpg）" }
+  ]
 }

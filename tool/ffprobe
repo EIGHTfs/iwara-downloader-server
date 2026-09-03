@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+HERE="$(cd "$(dirname "$0")" && pwd)"
+export LD_LIBRARY_PATH="$HERE/ffmpeg-lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+if [ -x "$HERE/ffprobe-bin" ] && "$HERE/ffprobe-bin" -hide_banner -version >/dev/null 2>&1; then
+  exec "$HERE/ffprobe-bin" "$@"
+fi
+for c in /usr/bin/ffprobe /usr/local/bin/ffprobe /opt/bin/ffprobe; do
+  if [ -x "$c" ]; then exec "$c" "$@"; fi
+done
+echo "ffprobe not found" >&2
+exit 127
