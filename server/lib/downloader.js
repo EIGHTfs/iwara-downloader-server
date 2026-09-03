@@ -279,9 +279,20 @@ function downloadToFile(item, onProgress) {
           res.pipe(stream);
           stream.on("finish", () => {
             // 校验：若已到达或超过总大小则完成（无法精确校验时以 HTTP 结束为准）
-            fs.renameSync(tmpFile, item.savePath);
-            cdnMarkSuccess(host); // 成功 → 写入 GOOD 列表
-            resolve("done");
+            // 2026-09-04 修改：.part 被删时 renameSync 抛 ENOENT 未捕获，整个进程退出。
+            // 【原代码】fs.renameSync(tmpFile, item.savePath);
+            // 【改为】实测清测试 .part 时进程崩：Error ENOENT rename ...mp4.part。用户原话「功能都要你实际测试通过」。
+            // 【思路】finish 时先 existsSync；没有就当任务被停/文件被清，reject 给单条失败，不拖死服务。
+            try {
+              if (!fs.existsSync(tmpFile)) {
+                return reject(new Error("临时文件已消失（下载被停止或 .part 被删除）"));
+              }
+              fs.renameSync(tmpFile, item.savePath);
+              cdnMarkSuccess(host); // 成功 → 写入 GOOD 列表
+              resolve("done");
+            } catch (e) {
+              reject(e);
+            }
           });
           stream.on("error", (e) => reject(e));
           req.on("error", (e) => reject(e));
