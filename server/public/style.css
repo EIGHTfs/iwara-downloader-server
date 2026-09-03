@@ -221,6 +221,14 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary); o
   font-size: 13px;
 }
 .item .icon { width: 22px; text-align: center; flex-shrink: 0; }
+.play-btn {
+  flex-shrink: 0;
+  width: 28px; height: 28px;
+  line-height: 28px; text-align: center;
+  border-radius: 50%;
+  background: var(--primary); color: #fff;
+  text-decoration: none; font-size: 12px;
+}
 .item.ok .icon { color: var(--success); }
 .item.fail .icon { color: var(--fail); }
 .item .status-text {

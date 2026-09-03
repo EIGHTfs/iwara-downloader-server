@@ -185,7 +185,6 @@ function renderTask(task) {
   if (!task || !(task.items || []).length) {
     $("#progressFill").style.width = "0%";
     $("#taskMeta").textContent = "尚未开始下载";
-    $("#activeList").innerHTML = "";
     $("#taskList").innerHTML = '<div class="empty">暂无任务</div>';
     $("#pauseBtn").disabled = true;
     $("#resumeBtn").disabled = true;
@@ -208,7 +207,6 @@ function renderTask(task) {
   if ($("#removeCompletedBtn")) $("#removeCompletedBtn").disabled = doneN === 0;
 
   const now = Date.now();
-  const activeHtml = [];
   const listHtml = [];
   for (const it of items) {
     const bytes = it.doneBytes || 0;
@@ -229,7 +227,11 @@ function renderTask(task) {
         : (it.state === "done" || it.state === "skipped" || it.state === "submitted" ? "row-bar-ok" : "row-bar-pending"));
     const p = Math.max(0, Math.min(100, it.progress || 0));
     const meta = [it.author, it.file, speedStr, it.error].filter(Boolean).join(" · ");
+    const play = it.id
+      ? `<a class="play-btn" href="/play.html?id=${encodeURIComponent(it.id)}" target="_blank" rel="noopener" title="本地播放">▶</a>`
+      : "";
     const row = `<div class="item ${cls}">
+      ${play}
       <span class="icon">${icon}</span>
       <span class="item-name">${esc(it.title || it.id)}
         <span class="row-bar ${barCls}"><span class="row-bar-fill" style="width:${p}%"></span></span>
@@ -237,9 +239,7 @@ function renderTask(task) {
       <span class="status-text">${esc(it.state || "")} ${p}% ${esc(speedStr)} ${fmtSize(it.doneBytes)}${it.total ? " / " + fmtSize(it.total) : ""}<br>${esc(meta)}</span>
     </div>`;
     listHtml.push(row);
-    if (it.state === "downloading") activeHtml.push(row);
   }
-  $("#activeList").innerHTML = activeHtml.join("");
   $("#taskList").innerHTML = listHtml.join("") || '<div class="empty">暂无任务</div>';
 }
 

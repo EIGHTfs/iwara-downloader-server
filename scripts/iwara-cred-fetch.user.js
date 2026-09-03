@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Iwara 下载助手（Cookie + 一键发送到服务器）
 // @namespace    iwara-cred
-// @version      7.5.0
+// @version      7.6.0
 // @description  SPA 换页不重载；服务器地址 GM+localStorage 双写，打开必回填。
 // @author       fnOS
 // @match        https://www.iwara.tv/*
@@ -40,13 +40,15 @@
 (function () {
     "use strict";
 
-    const VER = "7.5.0";
+    const VER = "7.6.0";
     const ACCOUNT_TTL_MS = 5 * 60 * 1000; // 换页不重复打 /api/account-check
     const SRV_SESSION_KEY = "iwcred_server_session";
-    const IWARA_ICON = "data:image/png;base64,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";
+    const IWARA_ICON = "data:image/png;base64,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";
     const LOGIN_WARN_DAYS = 7;
     const SRV_KEY = "iwcred_server";
     const SRV_PWD_KEY = "iwcred_server_pwd";
+    // 用户原话「填写和读取分离…添加后的服务端用下拉列表展示选择，不能被修改只能删除」
+    const SRV_LIST_KEY = "iwcred_server_list";
     const COOKIE_CACHE_KEY = "iwcred_cookie_cache";
     const USER_CACHE_KEY = "iwcred_user_cache";
     const SKEW_MS = 60 * 1000; // 提前 1 分钟视为过期
@@ -96,6 +98,82 @@
             if (s) localStorage.setItem("iwcred:" + key, s);
             else localStorage.removeItem("iwcred:" + key);
         } catch (_) {}
+    }
+
+    function normalizeServerBase(url) {
+        let s = String(url || "").trim();
+        if (!s) return "";
+        s = s.replace(/\/+$/, "");
+        if (!/^https?:\/\//i.test(s)) s = "http://" + s;
+        return s;
+    }
+    function loadServerList() {
+        let list = [];
+        try { list = JSON.parse(storeGet(SRV_LIST_KEY) || "[]"); } catch (_) { list = []; }
+        if (!Array.isArray(list)) list = [];
+        list = list.map((it) => ({ url: normalizeServerBase(it && it.url), password: String((it && it.password) || "") })).filter((it) => it.url);
+        const seen = new Set();
+        const uniq = [];
+        for (const it of list) { if (seen.has(it.url)) continue; seen.add(it.url); uniq.push(it); }
+        const legacy = normalizeServerBase(storeGet(SRV_KEY));
+        if (legacy && !uniq.some((it) => it.url === legacy)) {
+            uniq.unshift({ url: legacy, password: storeGet(SRV_PWD_KEY) });
+            saveServerList(uniq);
+        }
+        return uniq;
+    }
+    function saveServerList(list) { storeSet(SRV_LIST_KEY, JSON.stringify(list || [])); }
+    function currentServer() {
+        const list = loadServerList();
+        const sel = normalizeServerBase(storeGet(SRV_KEY));
+        return list.find((it) => it.url === sel) || list[0] || null;
+    }
+    function fillServerSelect() {
+        const sel = panelEl && panelEl.querySelector("#iwcred-server");
+        if (!sel) return;
+        const list = loadServerList();
+        const cur = currentServer();
+        sel.innerHTML = "";
+        if (!list.length) {
+            const o = document.createElement("option");
+            o.value = ""; o.textContent = "尚未添加服务端";
+            sel.appendChild(o); return;
+        }
+        for (const it of list) {
+            const o = document.createElement("option");
+            o.value = it.url; o.textContent = it.url;
+            sel.appendChild(o);
+        }
+        sel.value = cur ? cur.url : list[0].url;
+        if (cur) { storeSet(SRV_KEY, cur.url); storeSet(SRV_PWD_KEY, cur.password); }
+    }
+    function addServerFromForm() {
+        const url = normalizeServerBase(panelEl.querySelector("#iwcred-url-new").value);
+        const password = panelEl.querySelector("#iwcred-pwd-new").value || "";
+        if (!url) { srvSetStatus("请填写服务器地址", "err"); return; }
+        const list = loadServerList();
+        if (list.some((it) => it.url === url)) { srvSetStatus("已存在该地址", "err"); return; }
+        list.push({ url, password });
+        saveServerList(list);
+        storeSet(SRV_KEY, url);
+        storeSet(SRV_PWD_KEY, password);
+        panelEl.querySelector("#iwcred-add-form").style.display = "none";
+        fillServerSelect();
+        srvSetStatus("已添加 " + url, "ok");
+        showPanel();
+    }
+    function deleteSelectedServer() {
+        const sel = panelEl.querySelector("#iwcred-server");
+        const url = sel && sel.value;
+        if (!url) { srvSetStatus("没有可删除的服务端", "err"); return; }
+        const list = loadServerList().filter((it) => it.url !== url);
+        saveServerList(list);
+        const next = list[0] || { url: "", password: "" };
+        storeSet(SRV_KEY, next.url);
+        storeSet(SRV_PWD_KEY, next.password);
+        fillServerSelect();
+        srvSetStatus("已删除 " + url, "ok");
+        showPanel();
     }
 
     /** Cookie 缓存是否仍有效（提前 SKEW_MS 视为过期）。打开面板不走这里。 */
@@ -246,14 +324,6 @@
         });
     }
 
-    function normalizeServerBase(url) {
-        let s = String(url || "").trim();
-        if (!s) return "";
-        s = s.replace(/\/+$/, "");
-        if (!/^https?:\/\//i.test(s)) s = "http://" + s;
-        return s;
-    }
-
     /** GET /api/status，不需要登录。用来判断 needsAuth。 */
     async function probeServer(url) {
         const base = normalizeServerBase(url);
@@ -286,8 +356,7 @@
         if (!probe.ok) return { ok: false, error: probe.error, base };
         let session = "";
         if (probe.status && probe.status.needsAuth) {
-            const pwdInput = panelEl && panelEl.querySelector("#iwcred-server-pwd");
-            const pwd = String((pwdInput && pwdInput.value) || storeGet(SRV_PWD_KEY) || "");
+            const pwd = String((currentServer() && currentServer().password) || storeGet(SRV_PWD_KEY) || "");
             if (!pwd) return { ok: false, error: "服务器设有密码，请填写服务器访问密码", base, needsPwd: true };
             const lg = await serverLogin(base, pwd);
             if (!lg.ok) return { ok: false, error: lg.error, base };
@@ -396,12 +465,12 @@
 #iwcred-toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);z-index:2147483647;
   background:rgba(20,24,30,.92);color:#fff;padding:10px 16px;border-radius:10px;font-size:14px;
   max-width:86vw;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,.3);display:none}
-#iwcred-server-row{display:flex;gap:6px;margin-top:4px}
+#iwcred-server-row{display:flex;gap:6px;margin-top:4px;align-items:center}
 #iwcred-server{flex:1;min-width:0;padding:8px;border:1px solid #c9cfd8;border-radius:8px;
   font:13px/1.4 ui-monospace,Consolas,monospace;color:#222;background:#fafbfc}
 #iwcred-pwd-row{display:flex;gap:6px;margin-top:4px}
-#iwcred-server-pwd{flex:1;min-width:0;padding:8px;border:1px solid #c9cfd8;border-radius:8px;
-  font:13px/1.4 ui-monospace,Consolas,monospace;color:#222;background:#fafbfc}
+#iwcred-add-form{display:none;margin-top:8px;padding:8px;background:#f7f9fc;border-radius:8px}
+#iwcred-add-form input{width:100%;box-sizing:border-box;margin:4px 0;padding:8px;border:1px solid #c9cfd8;border-radius:8px}
 #iwcred-send{background:#1a9d4b;color:#fff;border:none;border-radius:8px;padding:8px 12px;cursor:pointer;
   font-weight:600;white-space:nowrap;font-size:13px}
 #iwcred-send:disabled{background:#9cc9ac;cursor:wait}
@@ -457,16 +526,21 @@
 <div id="iwcred-body">
   <label>📤 发送到服务器（当前视频链接 → 服务器自行解析下载，不读 Cookie）</label>
   <div id="iwcred-server-row">
-    <input id="iwcred-server" placeholder="10.10.10.4:28463 或 http://IP:端口" spellcheck="false">
+    <select id="iwcred-server"></select>
     <button id="iwcred-send">📤 发送</button>
   </div>
-  <label style="margin-top:6px">服务器访问密码（可选；设了密码的服务器自动登录用，记在本地）</label>
-  <div id="iwcred-pwd-row">
-    <input id="iwcred-server-pwd" type="password" placeholder="服务器访问密码（留空则尝试免登录）" autocomplete="off">
-  </div>
   <div id="iwcred-srv-actions">
-    <button id="iwcred-save">💾 记住地址</button>
+    <button id="iwcred-add">➕ 添加</button>
+    <button id="iwcred-del">🗑 删除</button>
     <button id="iwcred-inject">🔄 注入登录态到浏览器</button>
+  </div>
+  <div id="iwcred-add-form">
+    <input id="iwcred-url-new" placeholder="http://IP:端口" spellcheck="false">
+    <input id="iwcred-pwd-new" type="password" placeholder="访问密码（可空）" autocomplete="off">
+    <div id="iwcred-srv-actions">
+      <button id="iwcred-add-ok">确认添加</button>
+      <button id="iwcred-add-cancel">取消</button>
+    </div>
   </div>
   <div id="iwcred-srv-status"></div>
   <div id="iwcred-local">
@@ -499,10 +573,25 @@
                 });
                 panelEl.querySelector("#iwcred-refresh-cred").addEventListener("click", () => syncFromServer(true));
                 panelEl.querySelector("#iwcred-send").addEventListener("click", srvSendFlow);
-                panelEl.querySelector("#iwcred-save").addEventListener("click", srvSaveFlow);
+                panelEl.querySelector("#iwcred-add").addEventListener("click", () => {
+                    panelEl.querySelector("#iwcred-add-form").style.display = "block";
+                    panelEl.querySelector("#iwcred-url-new").value = "";
+                    panelEl.querySelector("#iwcred-pwd-new").value = "";
+                });
+                panelEl.querySelector("#iwcred-add-cancel").addEventListener("click", () => {
+                    panelEl.querySelector("#iwcred-add-form").style.display = "none";
+                });
+                panelEl.querySelector("#iwcred-add-ok").addEventListener("click", addServerFromForm);
+                panelEl.querySelector("#iwcred-del").addEventListener("click", deleteSelectedServer);
+                panelEl.querySelector("#iwcred-server").addEventListener("change", () => {
+                    const url = panelEl.querySelector("#iwcred-server").value;
+                    const hit = loadServerList().find((it) => it.url === url);
+                    if (!hit) return;
+                    storeSet(SRV_KEY, hit.url);
+                    storeSet(SRV_PWD_KEY, hit.password);
+                    showPanel();
+                });
                 panelEl.querySelector("#iwcred-inject").addEventListener("click", srvInjectFlow);
-                panelEl.querySelector("#iwcred-server").addEventListener("keydown", (e) => { if (e.key === "Enter") srvSendFlow(); });
-                panelEl.querySelector("#iwcred-server-pwd").addEventListener("keydown", (e) => { if (e.key === "Enter") srvSendFlow(); });
             }
             mountUi(panelEl);
         }
@@ -650,12 +739,9 @@
         const userbar = panelEl.querySelector("#iwcred-userbar");
         if (userbar && !userbar.textContent) userbar.textContent = "正在从服务器读取账号…";
 
-        const saved = normalizeServerBase(storeGet(SRV_KEY) || "");
-        const inp = srvInput();
-        if (inp && saved && !inp.value.trim()) inp.value = saved;
-        const pwdInput = panelEl.querySelector("#iwcred-server-pwd");
-        const savedPwd = storeGet(SRV_PWD_KEY);
-        if (pwdInput && savedPwd && !pwdInput.value.trim()) pwdInput.value = savedPwd;
+        fillServerSelect();
+        const cur = currentServer();
+        const saved = cur ? cur.url : "";
         if (saved) {
             const srvEl = panelEl.querySelector("#iwcred-srv-status");
             if (srvEl && !srvEl.textContent) srvEl.textContent = "正在从服务器读取账号…";
@@ -673,15 +759,14 @@
         credRefreshing = true;
         const userbar = panelEl.querySelector("#iwcred-userbar");
         try {
-            const inp = srvInput();
-            const base = normalizeServerBase((inp && inp.value.trim()) || storeGet(SRV_KEY) || "");
+            const cur = currentServer();
+            const base = cur ? cur.url : "";
             if (!base) {
-                userbar.textContent = "没有服务器地址：填入后才会从 /api/account-check 读取登录信息";
+                userbar.textContent = "没有服务器地址：点「添加」写入后再从 /api/account-check 读取登录信息";
                 userbar.className = "err";
-                srvSetStatus("请先填写并记住服务器地址", "err");
+                srvSetStatus("请先添加并选择服务器", "err");
                 return;
             }
-            if (inp) inp.value = base;
             userbar.textContent = "正在从服务器读取账号（GET /api/account-check）…";
             userbar.className = "";
             const sess = await ensureServerSession(base);
@@ -738,17 +823,16 @@
     async function srvSendFlow() {
         if (!ensureUi()) return;
         const videoUrl = currentVideoUrl();
-        const inp = srvInput();
         if (!videoUrl) {
             srvSetStatus("当前不是视频页（未匹配 /video/xxx），请打开视频页再发", "err");
             return;
         }
-        let base = normalizeServerBase((inp && inp.value.trim()) || storeGet(SRV_KEY) || "");
+        const cur = currentServer();
+        let base = cur ? cur.url : "";
         if (!base) {
-            srvSetStatus("没有服务器地址：请手动输入（如 10.10.10.4:28463 或 http://10.10.10.4:28463）", "err");
+            srvSetStatus("没有服务器地址：请先点「添加」写入服务端", "err");
             return;
         }
-        if (inp) inp.value = base;
         const sendBtn = panelEl.querySelector("#iwcred-send");
         if (sendBtn) sendBtn.disabled = true;
         try {
@@ -760,11 +844,9 @@
             }
             let session = "";
             if (probe.status && probe.status.needsAuth) {
-                const pwdInput = panelEl.querySelector("#iwcred-server-pwd");
-                let pwd = (pwdInput && pwdInput.value) || storeGet(SRV_PWD_KEY) || "";
-                pwd = String(pwd || "");
+                let pwd = String((cur && cur.password) || storeGet(SRV_PWD_KEY) || "");
                 if (!pwd) {
-                    srvSetStatus("⚠️ 服务器设有访问密码：请在下方输入服务器访问密码（仅存本地，用于自动登录）", "err");
+                    srvSetStatus("⚠️ 服务器设有访问密码：请删除后重新添加并填写密码", "err");
                     return;
                 }
                 srvSetStatus("服务器设有密码，正在自动登录…", "info");
@@ -774,7 +856,6 @@
                     return;
                 }
                 session = lg.session;
-                if (pwdInput) { pwdInput.value = pwd; storeSet(SRV_PWD_KEY, pwd); }
             }
             srvSetStatus(`服务器在线（端口 ${probe.status.port || "?"}），正在发送视频…`, "info");
             const r = await sendVideoToServer(base, videoUrl, session);
@@ -793,18 +874,7 @@
     }
 
     function srvSaveFlow() {
-        if (!ensureUi()) return;
-        const inp = srvInput();
-        const base = normalizeServerBase((inp && inp.value.trim()) || storeGet(SRV_KEY) || "");
-        if (!base) { srvSetStatus("请输入服务器地址", "err"); return; }
-        if (inp) inp.value = base;
-        storeSet(SRV_KEY, base);
-        const pwdInput = panelEl.querySelector("#iwcred-server-pwd");
-        if (pwdInput && pwdInput.value.trim()) storeSet(SRV_PWD_KEY, pwdInput.value.trim());
-        const hasPwd = !!(pwdInput && pwdInput.value.trim()) || !!storeGet(SRV_PWD_KEY);
-        srvSetStatus(`已记住：${base}${hasPwd ? "（含密码）" : ""}`, "ok");
-        showToast("已记住服务器地址");
-        log("saved server", base);
+        fillServerSelect();
     }
 
     /** 从服务器拉明文凭证（GET /api/cred，需登录会话）。 */
@@ -838,10 +908,9 @@
     /** 注入主流程：GET /api/cred → 写 cookie + localStorage，提示刷新。 */
     async function srvInjectFlow() {
         if (!ensureUi()) return;
-        const inp = srvInput();
-        const base = normalizeServerBase((inp && inp.value.trim()) || storeGet(SRV_KEY) || "");
-        if (!base) { srvSetStatus("没有服务器地址：先填写并记住地址", "err"); return; }
-        if (inp) inp.value = base;
+        const cur = currentServer();
+        const base = cur ? cur.url : "";
+        if (!base) { srvSetStatus("没有服务器地址：先添加并选择服务端", "err"); return; }
         const btn = panelEl.querySelector("#iwcred-inject");
         if (btn) btn.disabled = true;
         try {

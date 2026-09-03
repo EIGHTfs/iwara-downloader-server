@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" href="/favicon.png?v=2">
+<link rel="apple-touch-icon" href="/iwara-logo.png?v=2">
+<title>本地播放 · iwara-downloader</title>
+<link rel="stylesheet" href="style.css">
+<script>
+try {
+  const th = localStorage.getItem("gbmd-theme");
+  if (th === "night") document.documentElement.setAttribute("data-theme", "night");
+} catch (_) {}
+</script>
+<style>
+.player-page { max-width: 1100px; margin: 0 auto; padding: 16px; }
+.player-stage { background: #000; border-radius: 10px; overflow: hidden; }
+.player-stage video { width: 100%; max-height: 72vh; display: block; background: #000; }
+.player-meta { margin-top: 16px; }
+.player-meta h1 { margin: 0 0 8px; font-size: 22px; }
+.player-author { color: var(--muted); margin-bottom: 10px; }
+.player-author a { color: var(--primary); text-decoration: none; }
+.player-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.player-tags span { background: var(--card2); border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px; font-size: 12px; }
+.player-extra { margin-top: 10px; color: var(--muted); font-size: 13px; }
+.player-err { color: var(--fail); margin-top: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand-block">
+    <a href="/" style="display:flex;align-items:center;gap:10px;color:inherit;text-decoration:none">
+      <img src="iwara-logo.png" alt="Iwara" class="brand-logo">
+      <h1 class="brand-title">Iwara<br>Video<br>Downloader</h1>
+    </a>
+  </div>
+  <div class="right">
+    <a class="ghost" href="/">返回进度</a>
+  </div>
+</header>
+<main class="player-page">
+  <div class="player-stage">
+    <video id="player" controls playsinline poster=""></video>
+  </div>
+  <div class="player-meta">
+    <h1 id="title">加载中…</h1>
+    <div class="player-author" id="author"></div>
+    <div class="player-tags" id="tags"></div>
+    <div class="player-extra" id="extra"></div>
+    <div class="player-err" id="err"></div>
+  </div>
+</main>
+<script>
+(function () {
+  const q = new URLSearchParams(location.search);
+  const id = (q.get("id") || "").trim();
+  const $ = (s) => document.querySelector(s);
+  function esc(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+  function dur(n) {
+    n = Number(n) || 0;
+    const m = Math.floor(n / 60), s = Math.floor(n % 60);
+    return m + ":" + String(s).padStart(2, "0");
+  }
+  if (!id) { $("#title").textContent = "缺少视频 id"; return; }
+  fetch("/api/play-info?id=" + encodeURIComponent(id), { credentials: "same-origin" })
+    .then((r) => r.json())
+    .then((j) => {
+      if (!j.ok) throw new Error(j.error || "读取失败");
+      document.title = (j.title || id) + " · 本地播放";
+      $("#title").textContent = j.title || id;
+      const name = j.name || j.username || "";
+      $("#author").innerHTML = name
+        ? (j.username
+          ? '<a href="https://www.iwara.tv/profile/' + encodeURIComponent(j.username) + '" target="_blank" rel="noopener">' + esc(name) + "</a>"
+          : esc(name))
+        : "";
+      const tags = Array.isArray(j.tags) ? j.tags : [];
+      $("#tags").innerHTML = tags.map((t) => "<span>" + esc(t.id || t) + "</span>").join("");
+      const extra = [];
+      if (j.duration) extra.push("时长 " + dur(j.duration));
+      if (j.createdAt) extra.push("上传 " + String(j.createdAt).slice(0, 10));
+      extra.push("id " + id);
+      $("#extra").textContent = extra.join(" · ");
+      const v = $("#player");
+      if (j.fileId) v.poster = "/api/thumb?file=" + encodeURIComponent(j.fileId) + "&n=0";
+      if (j.hasFile) v.src = "/api/play?id=" + encodeURIComponent(id);
+      else $("#err").textContent = "索引有元数据，但本机还没有视频文件（可能还在下，或 Aria2 在另一台机器）。";
+    })
+    .catch((e) => {
+      $("#title").textContent = "无法播放";
+      $("#err").textContent = e.message || String(e);
+    });
+})();
+</script>
+</body>
+</html>

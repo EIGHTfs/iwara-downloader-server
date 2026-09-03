@@ -208,6 +208,44 @@ function sidecarPath(videoPath) {
   return base + ".json";
 }
 
+const VIDEO_EXT = [".mp4", ".webm", ".mkv", ".mov", ".m4v"];
+
+function findPlayable(root, id, hintPath) {
+  const vid = String(id || "").trim();
+  if (!vid) return null;
+  const catalog = loadCatalogMap(root);
+  const catalogEntry = catalog[vid] || null;
+
+  function fromVideo(file, forcedEntry) {
+    if (!file) return null;
+    try {
+      if (!fs.existsSync(file) || !fs.statSync(file).isFile()) return null;
+    } catch (_) { return null; }
+    const ext = path.extname(file).toLowerCase();
+    if (VIDEO_EXT.indexOf(ext) < 0) return null;
+    const mapped = parseIndexPayload(readJson(sidecarPath(file)));
+    const entry = forcedEntry || mapped[vid] || catalogEntry || Object.values(mapped)[0] || null;
+    return { file, entry, size: fs.statSync(file).size };
+  }
+
+  const hinted = fromVideo(hintPath, catalogEntry);
+  if (hinted) return hinted;
+
+  const files = [];
+  if (root && fs.existsSync(root)) walkJsonFiles(root, files, 0);
+  for (const jf of files) {
+    const incoming = parseIndexPayload(readJson(jf));
+    if (!incoming[vid]) continue;
+    const base = jf.toLowerCase().endsWith(".json") ? jf.slice(0, -5) : jf;
+    for (let i = 0; i < VIDEO_EXT.length; i++) {
+      const hit = fromVideo(base + VIDEO_EXT[i], incoming[vid]);
+      if (hit) return hit;
+    }
+  }
+  if (catalogEntry) return { file: null, entry: catalogEntry, size: 0 };
+  return null;
+}
+
 function catalogPath(root) {
   return path.join(root, CATALOG_NAME);
 }
@@ -392,6 +430,7 @@ module.exports = {
   recordDownload,
   importPayload,
   listCatalog,
+  findPlayable,
   hasVideo,
   catalogFileBuffer,
   scanDownloadDir,
