@@ -936,14 +936,25 @@ async function processOneItem(item) {
   }
 }
 
+function liveConcurrency() {
+  return Math.max(1, Math.min(32, parseInt(cfg.readConfig().concurrency, 10) || 3));
+}
+
+function hasWorkLeft() {
+  return (task.items || []).some((it) => {
+    if (it.state === "pending" || it.state === "downloading" || it.state === "retry-wait") return true;
+    if (it.aria2Gid && (it.state === "downloading" || it.state === "paused")) return true;
+    return false;
+  });
+}
+
 async function runDownloadLoop() {
   if (task.status !== "running") return;
   if (loopRunning) return;
   loopRunning = true;
   try {
-  const c = cfg.readConfig();
-  const concurrency = Math.max(1, Math.min(8, parseInt(c.concurrency, 10) || 3));
-
+  // 对照 gbmd consume：开满并发槽，空槽等待；后加入队也能补上。
+  // 【错法】min(concurrency, 当时 pending 数) 开 worker，没活立刻 return——只对「同时入队」有效。
   const takeNext = () => {
     if (task.status !== "running") return null;
     for (const it of task.items) {
@@ -957,30 +968,31 @@ async function runDownloadLoop() {
 
   const worker = async () => {
     while (task.status === "running") {
+      const cur = liveConcurrency();
+      if (activeDownloads >= cur) {
+        await new Promise((r) => setTimeout(r, 200));
+        continue;
+      }
       const item = takeNext();
-      if (!item) return;
+      if (!item) {
+        if (hasWorkLeft()) {
+          await new Promise((r) => setTimeout(r, 200));
+          continue;
+        }
+        return;
+      }
       activeDownloads++;
       await processOneItem(item);
     }
   };
 
-  const n = Math.max(1, Math.min(concurrency, (task.items || []).filter((it) => it.state === "pending" || it.state === "downloading").length || concurrency));
   const workers = [];
-  for (let i = 0; i < n; i++) workers.push(worker());
+  for (let i = 0; i < 32; i++) workers.push(worker());
   await Promise.all(workers);
 
-  // 重试把失败项改回 pending 时，本轮 worker 可能已退出；还有 pending 就再开一轮
-  while (task.status === "running" && (task.items || []).some((it) => it.state === "pending")) {
-    const again = [];
-    const left = (task.items || []).filter((it) => it.state === "pending").length;
-    const n2 = Math.max(1, Math.min(concurrency, left));
-    for (let i = 0; i < n2; i++) again.push(worker());
-    await Promise.all(again);
-  }
-
   const aria2Live = (task.items || []).some((it) => it.aria2Gid && (it.state === "downloading" || it.state === "paused"));
-  const pendingLeft = (task.items || []).some((it) => it.state === "pending");
-  if (task.status === "running" && !aria2Live && !pendingLeft) {
+  const pendingLeft = (task.items || []).some((it) => it.state === "pending" || it.state === "retry-wait");
+  if (task.status === "running" && !aria2Live && !pendingLeft && activeDownloads === 0) {
     task.status = "idle";
     saveTask();
     console.log(`[downloader] 任务结束：完成 ${task.completed}，失败 ${task.failed}`);
@@ -988,8 +1000,7 @@ async function runDownloadLoop() {
   } finally {
     loopRunning = false;
   }
-  // 暂停期间 abort 后旧 loop 退出；继续时若新 loop 没抢到锁则这里补开
-  if (task.status === "running" && (task.items || []).some((it) => it.state === "pending")) {
+  if (task.status === "running" && hasWorkLeft()) {
     runDownloadLoop().catch((e) => console.error("[downloader] loop error:", e));
   }
 }
@@ -1060,14 +1071,11 @@ async function startDownloadTask(items) {
 
   task.backend = c.downloadBackend;
   task.totalBytes = task.items.reduce((s, i) => s + (i.total || 0), 0);
-  if (task.status !== "running") {
-    task.status = "running";
-    task.idx = 0;
-    saveTask();
-    runDownloadLoop().catch((e) => console.error("[downloader] loop error:", e));
-  } else {
-    saveTask();
-  }
+  task.status = "running";
+  task.idx = 0;
+  saveTask();
+  // 已在跑也要踢一脚：loopRunning 时是空操作，worker 会 takeNext 后加的 pending
+  runDownloadLoop().catch((e) => console.error("[downloader] loop error:", e));
   return { ok: true, total: task.items.length, added, resumed };
 }
 
@@ -1227,7 +1235,7 @@ async function stopTask(id) {
 
 function setConcurrency(n) {
   const c = cfg.readConfig();
-  c.concurrency = Math.max(1, Math.min(8, parseInt(n, 10) || 3));
+  c.concurrency = Math.max(1, Math.min(32, parseInt(n, 10) || 3));
   cfg.writeConfig(c);
   return c.concurrency;
 }
