@@ -1028,9 +1028,27 @@ function removeItem(id) {
   return { ok: true, removed, remaining: task.items.length };
 }
 
+function aria2Gids() {
+  return (task.items || []).filter((it) => it.aria2Gid && it.state !== "done" && it.state !== "failed" && it.state !== "skipped").map((it) => it.aria2Gid);
+}
+
+function stopAria2Monitor() {
+  if (aria2PollTimer) { clearInterval(aria2PollTimer); aria2PollTimer = null; }
+  if (aria2Ws) {
+    try { aria2Ws.close(); } catch (_) {}
+    aria2Ws = null;
+  }
+}
+
 function pauseTask() {
+  // 2026-09-04：暂停要真停 aria2。用户原话「aria2功能做完了吗」。
+  // 【原代码】只改 task.status=paused，aria2 继续下。
+  // 【思路】对每个 gid 调 aria2.pause；失败不挡本地暂停态。
   if (task.status === "running") {
     task.status = "paused";
+    for (const gid of aria2Gids()) {
+      aria2Rpc("aria2.pause", [gid]).catch((e) => console.error("[downloader] aria2.pause", gid, e && e.message || e));
+    }
     saveTask();
   }
   return task.status;
@@ -1040,6 +1058,11 @@ function resumeTask() {
   if (task.status === "paused") {
     task.status = "running";
     if (task.idx >= task.items.length) task.idx = 0;
+    const gids = aria2Gids();
+    for (const gid of gids) {
+      aria2Rpc("aria2.unpause", [gid]).catch((e) => console.error("[downloader] aria2.unpause", gid, e && e.message || e));
+    }
+    if (gids.length) ensureAria2Monitor();
     saveTask();
     runDownloadLoop().catch((e) => console.error("[downloader] loop error:", e));
   }
@@ -1047,6 +1070,20 @@ function resumeTask() {
 }
 
 function stopTask() {
+  // 2026-09-04：停止要从 aria2 队列拿掉。用户原话「aria2功能做完了吗」。
+  // 【原代码】只 idle，gid 还在 aria2 里继续下。
+  // 【思路】forceRemove 每条 gid；清监控。
+  const gids = aria2Gids();
+  for (const gid of gids) {
+    aria2Rpc("aria2.forceRemove", [gid]).catch((e) => console.error("[downloader] aria2.forceRemove", gid, e && e.message || e));
+  }
+  for (const it of task.items || []) {
+    if (it.aria2Gid && (it.state === "downloading" || it.state === "paused")) {
+      it.state = "pending";
+      it.error = "已停止（已从 Aria2 移除）";
+    }
+  }
+  stopAria2Monitor();
   task.status = "idle";
   saveTask();
   return "idle";
