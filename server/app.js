@@ -11,6 +11,8 @@ const urlMod = require("url");
 
 const os = require("os");
 
+const appLog = require("./lib/app-log");
+appLog.install();
 const cfg = require("./config");
 const auth = require("./auth");
 const api = require("./lib/iwara-api");
@@ -272,6 +274,7 @@ const server = http.createServer(async (req, res) => {
   const method = req.method;
 
   try {
+    if (appLog.shouldLogApi(method, pathname)) appLog.apiLine(method, pathname);
     // ---- 公开路由 ----
     // 油猴脚本下载（免鉴权，手机浏览器直接打开即触发 Tampermonkey 安装）
     if (method === "GET" && (pathname === "/userscript" || pathname === "/userscript.user.js" || pathname === "/iwara-cred-fetch.user.js")) {

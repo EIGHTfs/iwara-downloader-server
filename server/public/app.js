@@ -66,6 +66,22 @@ function fmtSpeed(s) {
   return s >= 1048576 ? (s / 1048576).toFixed(2) + " MB/s" : Math.round(s / 1024) + " KB/s";
 }
 
+function updateSpeedHud(task) {
+  const el = $("#speedHud");
+  if (!el) return;
+  const sp = task && task.totalSpeed ? task.totalSpeed : 0;
+  if (sp > 0) {
+    el.hidden = false;
+    el.textContent = "⬇ " + fmtSpeed(sp);
+  } else {
+    el.hidden = true;
+  }
+}
+
+function diffArrow(from, to) {
+  return '<span class="diff-from">' + esc(from) + '</span> → <span class="diff-to">' + esc(to) + '</span>';
+}
+
 function parseVideoIds(text) {
   return String(text || "")
     .split("\n")
@@ -371,6 +387,7 @@ function renderTask(task) {
   //   按 data-task-id 复用行，只改进度/状态/稳定文件名。
   const stateText = { running: "下载中", idle: "空闲", paused: "已暂停" };
   $("#taskState").textContent = task ? (stateText[task.status] || task.status) : "无任务";
+  updateSpeedHud(task);
   if (!task || !(task.items || []).length) {
     $("#progressFill").style.width = "0%";
     $("#taskMeta").textContent = "尚未开始下载";
@@ -1216,7 +1233,7 @@ function bindSettings() {
       if (dryRun) {
         const rows = (r.plan || []).slice(0, 200).map((row) => {
           const warn = row.exists ? " ⚠目标已存在（确认执行后可单条强制覆盖）" : "";
-          return "<div class=\"item\"><span class=\"item-name\">" + esc(row.fromName) + " → " + esc(row.toName) + warn + "</span></div>";
+          return "<div class=\"item\"><span class=\"item-name\">" + diffArrow(row.fromName, row.toName) + warn + "</span></div>";
         }).join("");
         if (el) el.innerHTML = rows || "<div class=\"empty\">没有需要改名的文件</div>";
         if (st) st.textContent = "视频 " + (r.videoCount || 0) + "，json " + (r.indexCount || 0) + "，待改名 " + (r.count || 0) + (r.skipped ? "，跳过 " + r.skipped : "");

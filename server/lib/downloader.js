@@ -216,7 +216,13 @@ function saveTask() {
   try { jsonDir.ensureJsonDir(); fs.writeFileSync(TASK_FILE, JSON.stringify(task, null, 2), "utf8"); } catch (_) {}
 }
 
-function getTask() { return task; }
+function getTask() {
+  let totalSpeed = 0;
+  for (const it of (task && task.items) || []) {
+    if (it && it.state === "downloading" && it.speed > 0) totalSpeed += it.speed;
+  }
+  return Object.assign({}, task, { totalSpeed });
+}
 
 function restorePendingTask() {
   try {
@@ -302,6 +308,16 @@ function downloadToFile(item, onProgress) {
             }
             done += c.length;
             if (item.total) item.doneBytes = done - writeStart + (item.baseBytes || 0);
+            const now = Date.now();
+            if (!item._spT) { item._spT = now; item._spLast = done; }
+            else {
+              const dt = (now - item._spT) / 1000;
+              if (dt >= 0.5) {
+                item.speed = Math.max(0, (done - item._spLast) / dt);
+                item._spT = now;
+                item._spLast = done;
+              }
+            }
             if (onProgress) onProgress({ done, total: item.total });
           });
           res.pipe(stream);
