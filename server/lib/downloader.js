@@ -429,7 +429,9 @@ function aria2StatusHasId(st, id, fileName) {
 async function aria2TellList(method) {
   try {
     const keys = ["gid", "status", "files", "totalLength", "completedLength"];
-    const r = await aria2Rpc(method, [0, 1000, keys]);
+    // tellActive 只有 keys；tellWaiting/tellStopped 才是 offset, num, keys
+    const params = method === "aria2.tellActive" ? [keys] : [0, 1000, keys];
+    const r = await aria2Rpc(method, params);
     return Array.isArray(r) ? r : [];
   } catch (e) {
     console.error("[downloader] " + method + " 失败:", e && e.message || e);
@@ -517,7 +519,139 @@ async function aria2Add(item) {
   // aria2 解析 *.iwara.tv 用的 DNS：读配置 aria2Dns（群晖 DNS Server 套件），留空则不传
   const dns = String(c.aria2Dns || "").trim();
   if (dns) options["dns-server"] = dns;
-  return aria2Rpc("aria2.addUri", [[item.url], options]);
+  const gid = await aria2Rpc("aria2.addUri", [[item.url], options]);
+  return gid;
+}
+
+
+// 2026-09-03：aria2 实时进度。
+// 用户原话：「aria2 本身提供了完善的 RPC 接口，要实现实时监控，主要有监听事件和轮询查询这两种方式。」
+// 【原代码】addUri 后 item.state=submitted、progress=100，进度页看不到真实下载。
+// 【改为】记下 gid；本机 ws://127.0.0.1:6800/jsonrpc 收 onDownload* 事件；每秒 tellStatus 补进度。
+// 【思路】群晖套件 RPC 代理是 HTTPS CGI，WebSocket 不稳；本机 6800 已实测 WS 可 getVersion。事件负责完成/失败，轮询负责 total/completed/speed。
+let aria2Ws = null;
+let aria2PollTimer = null;
+
+function aria2LocalWsUrl() {
+  return "ws://127.0.0.1:6800/jsonrpc";
+}
+
+function itemByGid(gid) {
+  const g = String(gid || "");
+  if (!g) return null;
+  return (task.items || []).find((it) => String(it.aria2Gid || "") === g) || null;
+}
+
+function applyAria2Status(item, st) {
+  if (!item || !st) return;
+  const total = parseInt(st.totalLength, 10) || 0;
+  const done = parseInt(st.completedLength, 10) || 0;
+  const speed = parseInt(st.downloadSpeed, 10) || 0;
+  if (total > 0) item.total = total;
+  item.doneBytes = done;
+  item.progress = total ? Math.min(99, Math.round((done / total) * 100)) : item.progress || 0;
+  item.speed = speed;
+  const status = String(st.status || "");
+  if (status === "complete") {
+    item.state = "done";
+    item.progress = 100;
+    item.error = "";
+  } else if (status === "error") {
+    item.state = "failed";
+    item.error = st.errorMessage || "aria2 error";
+  } else if (status === "paused") {
+    item.state = "paused";
+  } else if (item.state !== "done" && item.state !== "failed") {
+    item.state = "downloading";
+  }
+}
+
+function maybeFinishAria2Task() {
+  const items = task.items || [];
+  const live = items.filter((it) => it.aria2Gid && (it.state === "downloading" || it.state === "pending" || it.state === "paused"));
+  if (live.length) return;
+  if (aria2PollTimer) { clearInterval(aria2PollTimer); aria2PollTimer = null; }
+  task.completed = items.filter((it) => it.state === "done" || it.state === "skipped" || it.state === "submitted").length;
+  task.failed = items.filter((it) => it.state === "failed" || it.state === "error").length;
+  if (task.status === "running") {
+    task.status = "idle";
+    saveTask();
+    console.log("[downloader] aria2 任务结束：完成 " + task.completed + "，失败 " + task.failed);
+  }
+}
+
+async function pollAria2Statuses() {
+  const items = (task.items || []).filter((it) => it.aria2Gid && it.state !== "done" && it.state !== "failed" && it.state !== "skipped");
+  if (!items.length) { maybeFinishAria2Task(); return; }
+  for (const it of items) {
+    try {
+      const st = await aria2Rpc("aria2.tellStatus", [it.aria2Gid, ["gid", "status", "totalLength", "completedLength", "downloadSpeed", "errorMessage", "files"]]);
+      applyAria2Status(it, st);
+    } catch (e) {
+      // gid 消失多半已完成或被移除
+    }
+  }
+  saveTask();
+  maybeFinishAria2Task();
+}
+
+function ensureAria2Monitor() {
+  if (!aria2PollTimer) {
+    aria2PollTimer = setInterval(() => { pollAria2Statuses().catch(() => null); }, 1000);
+  }
+  if (aria2Ws) return;
+  const WS = globalThis.WebSocket;
+  if (typeof WS !== "function") {
+    console.log("[downloader] 无 WebSocket，只用 tellStatus 轮询 aria2");
+    return;
+  }
+  const c = cfg.readConfig();
+  const token = c.aria2Token;
+  try {
+    aria2Ws = new WS(aria2LocalWsUrl());
+  } catch (e) {
+    console.error("[downloader] aria2 WS 创建失败:", e && e.message || e);
+    aria2Ws = null;
+    return;
+  }
+  aria2Ws.addEventListener("open", () => {
+    console.log("[downloader] aria2 WS 已连接", aria2LocalWsUrl());
+  });
+  aria2Ws.addEventListener("message", (ev) => {
+    let j;
+    try { j = JSON.parse(String(ev.data || "")); } catch (_) { return; }
+    const method = j && j.method;
+    const gid = j && j.params && j.params[0] && j.params[0].gid;
+    if (!method || !gid) return;
+    const item = itemByGid(gid);
+    if (!item) return;
+    if (method === "aria2.onDownloadComplete") {
+      item.state = "done";
+      item.progress = 100;
+      item.error = "";
+      saveTask();
+      maybeFinishAria2Task();
+    } else if (method === "aria2.onDownloadError") {
+      item.state = "failed";
+      item.error = "aria2 onDownloadError";
+      aria2Rpc("aria2.tellStatus", [gid, ["errorMessage", "status"]]).then((st) => {
+        if (st && st.errorMessage) item.error = String(st.errorMessage);
+        saveTask();
+      }).catch(() => saveTask());
+      maybeFinishAria2Task();
+    } else if (method === "aria2.onDownloadStart" || method === "aria2.onDownloadPause") {
+      pollAria2Statuses().catch(() => null);
+    }
+  });
+  aria2Ws.addEventListener("close", () => {
+    aria2Ws = null;
+    setTimeout(() => {
+      if ((task.items || []).some((it) => it.aria2Gid && it.state === "downloading")) ensureAria2Monitor();
+    }, 2000);
+  });
+  aria2Ws.addEventListener("error", () => {
+    try { aria2Ws.close(); } catch (_) {}
+  });
 }
 
 // // ---------- 任务循环 ----------
@@ -683,9 +817,17 @@ async function processOneItem(item) {
       }
       const toggles = cfg.normalizeDownloadToggles(c.downloadToggles);
       if (toggles.video) {
-        await aria2Add(item);
+        const gid = await aria2Add(item);
+        item.aria2Gid = gid;
+        item.state = "downloading";
+        item.progress = 0;
+        item.error = "";
+        ensureAria2Monitor();
       } else {
         item.error = "已跳过视频（设置未勾选）";
+        item.state = "skipped";
+        item.progress = 100;
+        task.completed++;
       }
       const packed = videoIndex.fromDownload(info, item);
       if (packed && toggles.json) {
@@ -695,10 +837,6 @@ async function processOneItem(item) {
           console.error("[downloader] 索引 JSON 推送 aria2 失败:", e && e.message || e);
         }
       }
-      item.state = "submitted";
-      item.progress = 100;
-      if (toggles.video) item.error = "已提交至 Aria2（进度请查看 Aria2 WebUI）";
-      task.completed++;
       if (toggles.json) await videoIndex.recordDownload(c.downloadPath, info, item, { writeSidecar: false });
       return;
     }
@@ -795,7 +933,8 @@ async function runDownloadLoop() {
     await Promise.all(again);
   }
 
-  if (task.status === "running") {
+  const aria2Live = (task.items || []).some((it) => it.aria2Gid && (it.state === "downloading" || it.state === "paused"));
+  if (task.status === "running" && !aria2Live) {
     task.status = "idle";
     saveTask();
     console.log(`[downloader] 任务结束：完成 ${task.completed}，失败 ${task.failed}`);
