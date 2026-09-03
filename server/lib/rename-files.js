@@ -1,5 +1,7 @@
 // 按当前文件名模板批量重命名已下载视频
 // 用户原话：「iwara 设置增加重命名文件功能类似 gbmd 的合并文件夹，将含 id 的视频但不是模板命名格式的扫描出来先预览，然后批量重命名」
+// 用户原话：「(1) 为什么没被扫描到，这不规范」——模板名后面多「 (1)」也算不规范，必须进预览。
+// 用户原话：「是不是意外实现去重了」——Linux rename 覆盖已有目标会丢文件；执行时目标已存在一律跳过。
 "use strict";
 
 const fs = require("fs");
@@ -15,7 +17,7 @@ function walkVideos(dir, out, depth) {
   let names;
   try { names = fs.readdirSync(dir); } catch (_) { return; }
   for (const name of names) {
-    if (name === ".trash" || name === "node_modules" || name === ".git") continue;
+    if (name === ".trash" || name === "node_modules" || name === ".git" || name === "@eaDir") continue;
     const full = path.join(dir, name);
     let st;
     try { st = fs.statSync(full); } catch (_) { continue; }
@@ -27,25 +29,25 @@ function walkVideos(dir, out, depth) {
 }
 
 function extractId(filename, idSet) {
-  const base = String(filename || "").replace(/\.[^.]+$/, "");
+  // 用户原话：「你妈的说id就只根据json文件」
+  // 【错法】用方括号长度/形态猜 id，[Genshin_Impact] 被当成视频 id，(1) 副本扫不到。
+  // 【改法】只认 json/index 总表里的 id；文件名方括号内容必须能在 idSet 里命中。
+  const base = String(filename || "").replace(/\.[^.]+$/, "").replace(/ \(\d+\)$/, "");
   const brackets = [];
-  const re = /\[([A-Za-z0-9_-]{6,24})\]/g;
+  const re = /\[([^\]]+)\]/g;
   let m;
   while ((m = re.exec(base))) brackets.push(m[1]);
   for (const id of brackets) {
     if (idSet.has(id)) return id;
   }
-  for (const id of brackets) {
-    if (/^[A-Za-z0-9_-]{10,16}$/.test(id)) return id;
-  }
   for (const id of idSet) {
-    if (id && base.indexOf(id) >= 0) return id;
+    if (id && base.indexOf("[" + id + "]") >= 0) return id;
   }
   return "";
 }
 
 function qualityFromName(filename, id) {
-  const base = String(filename || "").replace(/\.[^.]+$/, "");
+  const base = String(filename || "").replace(/\.[^.]+$/, "").replace(/ \(\d+\)$/, "");
   if (id) {
     const after = base.split(id).pop() || "";
     const m = after.match(/^\]_\[([^\]]+)\]/);
@@ -89,14 +91,14 @@ function scanPlan() {
       continue;
     }
     const entry = map[id] || videoIndex.readEntry(id) || {};
-    // 索引没有标题时，用旧文件名里 id 前面一段当 TITLE、后面当 AUTHOR（旧格式 title[id]author.mp4）
     let title = entry.title || "";
     let author = entry.username || "";
     let alias = entry.name || "";
     if (!title) {
-      const i = base.indexOf(id);
-      const before = i >= 0 ? base.slice(0, i) : base;
-      const after = i >= 0 ? base.slice(i + id.length) : "";
+      const stem = base.replace(/\.[^.]+$/, "").replace(/ \(\d+\)$/, "");
+      const ii = stem.indexOf(id);
+      const before = ii >= 0 ? stem.slice(0, ii) : stem;
+      const after = ii >= 0 ? stem.slice(ii + id.length) : "";
       title = before.replace(/^Iwara_-_/i, "").replace(/[_\[\-\s]+$/g, "").trim();
       if (!author) author = after.replace(/^[\]_\-\s]+/g, "").replace(/\.[^.]+$/, "").trim();
     }
@@ -116,10 +118,34 @@ function scanPlan() {
       to,
       fromName: path.relative(root, from) || base,
       toName: path.relative(root, to) || destName,
-      exists
+      exists,
+      copySuffix: / \(\d+\)\.[^.]+$/.test(base)
     });
   }
-  return { ok: true, root, template: c.fileNameTemplate || "", count: plan.length, skipped: skipped.length, plan, skippedSample: skipped.slice(0, 20) };
+  const byTo = new Map();
+  for (const row of plan) {
+    const k = path.resolve(row.to);
+    if (!byTo.has(k)) byTo.set(k, []);
+    byTo.get(k).push(row.fromName);
+  }
+  const collisions = [];
+  for (const [to, froms] of byTo) {
+    if (froms.length < 2) continue;
+    collisions.push({ to: path.relative(root, to) || to, n: froms.length, from: froms });
+  }
+  return {
+    ok: true,
+    root,
+    template: c.fileNameTemplate || "",
+    videoCount: files.length,
+    count: plan.length,
+    skipped: skipped.length,
+    plan,
+    skippedSample: skipped.slice(0, 20),
+    collisions,
+    collisionCount: collisions.length,
+    wouldLoseIfOverwrite: collisions.reduce((n, c) => n + c.n - 1, 0)
+  };
 }
 
 function executePlan(dryRun) {
@@ -128,29 +154,38 @@ function executePlan(dryRun) {
   if (dryRun !== false) {
     return Object.assign({ dryRun: true }, scanned);
   }
+  // 用户原话：「是不是意外实现去重了」——禁止 rename 覆盖；目标已存在或本批已占用该目标则跳过。
   const renamed = [];
   const failed = [];
+  const taken = new Set();
   for (const row of scanned.plan) {
-    if (row.exists) {
-      failed.push({ from: row.fromName, to: row.toName, error: "目标已存在" });
+    const dest = path.resolve(row.to);
+    let destExists = false;
+    try { destExists = fs.existsSync(row.to); } catch (_) { destExists = false; }
+    if (destExists || taken.has(dest)) {
+      failed.push({ from: row.fromName, to: row.toName, error: "目标已存在，拒绝覆盖（避免去重丢文件）" });
       continue;
     }
     try {
       fs.mkdirSync(path.dirname(row.to), { recursive: true });
       fs.renameSync(row.from, row.to);
+      taken.add(dest);
       renamed.push({ from: row.fromName, to: row.toName, id: row.id });
     } catch (e) {
       failed.push({ from: row.fromName, to: row.toName, error: String(e.message || e) });
     }
   }
+  const after = scanPlan();
   return {
     ok: true,
     dryRun: false,
     renamed: renamed.length,
     failed: failed.length,
     items: renamed,
-    errors: failed
+    errors: failed,
+    videoCountBefore: scanned.videoCount,
+    videoCountAfter: after.videoCount
   };
 }
 
-module.exports = { scanPlan, executePlan };
+module.exports = { scanPlan, executePlan, extractId };
