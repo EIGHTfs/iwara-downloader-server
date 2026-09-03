@@ -221,7 +221,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary); o
   font-size: 13px;
 }
 .item .icon { width: 22px; text-align: center; flex-shrink: 0; }
-.mm-play-btn, .mm-retry-btn, .mm-skip-btn {
+.mm-play-btn, .mm-retry-btn, .mm-skip-btn, .mm-pause-btn, .mm-resume-btn, .mm-stop-btn {
   display: inline-block;
   padding: 2px 8px;
   font-size: 12px;
@@ -302,7 +302,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary); o
   width: 56px; height: 56px; object-fit: cover; border-radius: 6px;
   border: 1px solid var(--border); margin-left: 8px;
 }
-.mm-retry-btn, .mm-skip-btn { padding: 2px 8px; font-size: 12px; }
+.mm-retry-btn, .mm-skip-btn, .mm-pause-btn, .mm-resume-btn, .mm-stop-btn { padding: 2px 8px; font-size: 12px; }
 
 /* ================= 手机端适配（≤768px） ================= */
 @media (max-width: 768px) {

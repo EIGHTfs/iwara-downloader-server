@@ -19,6 +19,7 @@ const search = require("./lib/search-cache");
 const searchDateRange = require("./lib/search-date-range.cjs");
 const dataBackup = require("./lib/data-backup");
 const videoIndex = require("./lib/video-index");
+const renameFiles = require("./lib/rename-files");
 const deviceCheck = require("./lib/device-check");
 const thumbCache = require("./lib/thumb-cache.cjs");
 
@@ -220,6 +221,29 @@ function publicSettings(c) {
   });
 }
 
+
+function injectAssetVersion(html, publicDir) {
+  // 用户原话：「固化skill 不要求用户强刷网页，而是升级页面版本」
+  // html 引用的本站 css/js 自动 ?v=<mtime>，普通打开即新资源。
+  return String(html).replace(
+    /(<(?:link|script)\b[^>]*(?:href|src)=["'])([^"']+\.(?:css|js))(\?[^"']*)?(["'][^>]*>)/gi,
+    function (_, pre, url, query, post) {
+      if (/^(https?:)?\/\//i.test(url) || url.indexOf("/vendor/") >= 0) return pre + url + (query || "") + post;
+      var rel = url.replace(/^\//, "");
+      var file = path.join(publicDir, rel);
+      var v = "";
+      try {
+        if (fs.existsSync(file)) v = String(fs.statSync(file).mtimeMs | 0);
+      } catch (_) {}
+      if (!v) return pre + url + (query || "") + post;
+      var q = String(query || "");
+      if (/[?&]v=/.test(q)) q = q.replace(/([?&])v=[^&]*/, "$1v=" + v);
+      else q = (q ? q + "&" : "?") + "v=" + v;
+      return pre + url + q + post;
+    }
+  );
+}
+
 function serveStatic(req, res, pathname) {
   let filePath = path.join(PUBLIC_DIR, pathname === "/" ? "index.html" : pathname);
   if (!filePath.startsWith(PUBLIC_DIR)) { res.writeHead(403); res.end("Forbidden"); return; }
@@ -229,8 +253,14 @@ function serveStatic(req, res, pathname) {
     const headers = { "Content-Type": MIME[ext] || "application/octet-stream" };
     if (ext === ".html" || ext === ".js" || ext === ".css") headers["Cache-Control"] = "no-cache, no-store, must-revalidate";
     if (ext === ".ico" || ext === ".png") headers["Cache-Control"] = "public, max-age=86400";
+    if (req.method === "HEAD") { res.writeHead(200, headers); res.end(); return; }
+    if (ext === ".html") {
+      const html = injectAssetVersion(fs.readFileSync(filePath, "utf8"), PUBLIC_DIR);
+      headers["Content-Length"] = Buffer.byteLength(html);
+      res.writeHead(200, headers);
+      return res.end(html);
+    }
     res.writeHead(200, headers);
-    if (req.method === "HEAD") { res.end(); return; }
     fs.createReadStream(filePath).pipe(res);
   });
 }
@@ -747,9 +777,18 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 400, { ok: false, error: String(e.message || e) });
       }
     }
-    if (method === "POST" && pathname === "/api/task/pause") { return sendJson(res, 200, { ok: true, status: downloader.pauseTask() }); }
-    if (method === "POST" && pathname === "/api/task/resume") { return sendJson(res, 200, { ok: true, status: downloader.resumeTask() }); }
-    if (method === "POST" && pathname === "/api/task/stop") { return sendJson(res, 200, { ok: true, status: downloader.stopTask() }); }
+    if (method === "POST" && pathname === "/api/task/pause") {
+      const body = await readBody(req);
+      return sendJson(res, 200, { ok: true, status: await downloader.pauseTask(body && body.id) });
+    }
+    if (method === "POST" && pathname === "/api/task/resume") {
+      const body = await readBody(req);
+      return sendJson(res, 200, { ok: true, status: await downloader.resumeTask(body && body.id) });
+    }
+    if (method === "POST" && pathname === "/api/task/stop") {
+      const body = await readBody(req);
+      return sendJson(res, 200, { ok: true, status: await downloader.stopTask(body && body.id) });
+    }
     if (method === "POST" && pathname === "/api/task/retry") {
       const body = await readBody(req);
       const id = String((body && body.id) || parsed.query.id || "").trim();
@@ -767,6 +806,12 @@ const server = http.createServer(async (req, res) => {
       const id = String((body && body.id) || parsed.query.id || "").trim();
       if (!id) return sendJson(res, 400, { ok: false, error: "缺 id" });
       return sendJson(res, 200, downloader.removeItem(id));
+    }
+    // 用户原话：「iwara 设置增加重命名文件功能类似 gbmd 的合并文件夹」
+    if (method === "POST" && pathname === "/api/rename-files") {
+      const body = await readBody(req);
+      const dryRun = body && body.dryRun === false ? false : true;
+      return sendJson(res, 200, renameFiles.executePlan(dryRun));
     }
 
     // ---- 播放短链 /{id} ----

@@ -168,6 +168,14 @@ try {
           </select>
         </label>
       </div>
+      <h3 style="margin:14px 0 8px;font-size:14px;color:var(--primary)">✏️ 按模板重命名文件</h3>
+      <p class="hint" style="margin:4px 0 8px">扫描下载目录里「文件名含视频 id、但不是当前模板」的视频，先预览再批量改名。需要 json/index 里已有该 id。对照 gbmd 文件夹合并：预览 → 确认执行。</p>
+      <div class="row">
+        <button id="renamePreviewBtn" type="button">预览重命名计划</button>
+        <button id="renameGoBtn" type="button">确认执行</button>
+        <span class="status" id="renameStatus"></span>
+      </div>
+      <div id="renamePlan"></div>
     </div>
 
     <div class="card">

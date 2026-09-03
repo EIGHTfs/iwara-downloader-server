@@ -11,12 +11,13 @@ const api = require("./iwara-api");
 const thumbCache = require("./thumb-cache.cjs");
 
 const jsonDir = require("./json-dir");
+const profileIndex = require("./profile-index");
 const QUERY_FILE = jsonDir.migrateRuntimeJson("search_task.json"); //userdata-manifest.json file json/search_task.json 搜索任务状态
 const CACHE_FILE = jsonDir.migrateRuntimeJson("search_cache.json"); //userdata-manifest.json file json/search_cache.json 搜索记录缓存
 
 const MAX_PAGES = 80;
 const MAX_RESULTS = 2000;
-const PAGE_INTERVAL_MS = 400;
+const PAGE_INTERVAL_MS = 2000; // 用户原话：搜索加上 2 秒一页的限制
 
 let queryTask = null;
 let queryRunning = false;
@@ -189,6 +190,7 @@ async function doQueryLoop() {
         if (seen.has(v.id)) continue;
         seen.add(v.id);
         queryTask.results.push(v);
+        profileIndex.upsertFromVideo(v);
         // 2026-09-04：搜索时拉官方封面落到 thumbs/<id>.jpg。
         // 用户原话：「搜索时，下载时从官方获取封面并按本地规范保存」
         // 【思路】入队即 enqueue，不阻塞翻页；列表只读本地，封面到了刷新即可显示。
@@ -211,7 +213,10 @@ async function doQueryLoop() {
         break;
       }
       queryTask.page = page + 1;
-      await sleep(PAGE_INTERVAL_MS);
+      // 用户原话：「iwara 搜索加上 2 秒一页的限制」
+      // 【原代码】await sleep(PAGE_INTERVAL_MS) 且 PAGE_INTERVAL_MS=400
+      // 【改为】翻页间隔改到 listVideos 统一 2 秒，这里不再另睡，避免 2+2=4 秒
+
     }
   } catch (e) {
     queryTask.status = "error";
@@ -249,6 +254,7 @@ function importCache(records) {
     if (seen.has(v.id)) continue;
     seen.add(v.id);
     norm.push(v);
+    profileIndex.upsertFromVideo(v);
   }
   if (!norm.length) return { ok: false, error: "导入文件中没有带 id 的有效记录" };
 
@@ -286,6 +292,7 @@ function saveRecords(results) {
     if (!v || seen.has(v.id)) continue;
     seen.add(v.id);
     norm.push(v);
+    profileIndex.upsertFromVideo(v);
   }
   const cache = getCache() || { results: [], startDate: "", endDate: "", contentFilter: ["normal", "nsfw"], queryTime: 0 };
   cache.results = norm;

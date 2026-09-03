@@ -498,6 +498,42 @@ function thumbnailUrl(v) {
 }
 
 /** 封面图字节（IP 直连 i.iwara.tv） */
+function fetchCdnImage(pathname) {
+  const url = "https://i.iwara.tv" + (String(pathname || "").charAt(0) === "/" ? pathname : "/" + pathname);
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const req = https.request({
+      host: getCfIp(),
+      port: 443,
+      path: u.pathname,
+      method: "GET",
+      headers: { Host: u.hostname, "User-Agent": DEFAULT_UA, Referer: "https://www.iwara.tv/", Accept: "image/*,*/*" },
+      agent: HTTPS_AGENT,
+      servername: u.hostname
+    }, (res) => {
+      if (res.statusCode !== 200) {
+        res.resume();
+        return reject(new Error("HTTP " + res.statusCode));
+      }
+      const chunks = [];
+      res.on("data", (c) => chunks.push(c));
+      res.on("end", () => resolve({
+        buf: Buffer.concat(chunks),
+        contentType: res.headers["content-type"] || "image/jpeg"
+      }));
+    });
+    req.setTimeout(15000, () => req.destroy(new Error("图片超时")));
+    req.on("error", reject);
+    req.end();
+  });
+}
+
+function fetchAvatar(avatarId) {
+  const id = String(avatarId || "").trim();
+  if (!id) return Promise.reject(new Error("缺 avatar id"));
+  return fetchCdnImage("/image/avatar/" + id + "/" + id + ".jpg");
+}
+
 function fetchOneThumbnail(fileId, name) {
   const url = "https://i.iwara.tv/image/thumbnail/" + fileId + "/" + name;
   return new Promise((resolve, reject) => {
@@ -680,7 +716,16 @@ async function autoLikeFollow(info) {
  * 视频列表 / 搜索（iwara /videos 接口）
  * @param {Object} q - { sort:'date'|'trending'|'views'|'rating', page, limit, user, subscribed, type, search, rating }
  */
+let lastListVideosAt = 0;
+const LIST_PAGE_INTERVAL_MS = 2000; // 用户原话：「iwara 搜索加上 2 秒一页的限制」
 async function listVideos(q = {}) {
+  // 翻页统一限速：任意 listVideos（关键词/按时间/作者页）间隔至少 2 秒
+  if (lastListVideosAt) {
+    const wait = lastListVideosAt + LIST_PAGE_INTERVAL_MS - Date.now();
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+  }
+  lastListVideosAt = Date.now();
+
   const params = new URLSearchParams();
   params.set("page", String(q.page ?? 0));
   params.set("limit", String(q.limit ?? 20));
@@ -717,7 +762,9 @@ async function listVideos(q = {}) {
 
 /** 用户资料（含 id → username 转换 / 用户视频） */
 async function getUserProfile(usernameOrId) {
-  return await fetchJson(`https://${API_HOST}/user/${usernameOrId}`, { withAuth: false, retries: 2 });
+  const u = encodeURIComponent(String(usernameOrId || "").trim());
+  // 用户主页对应 GET /profile/{username}（/user/{username} 是 404）
+  return await fetchJson(`https://${API_HOST}/profile/${u}`, { withAuth: false, retries: 2 });
 }
 
 /** 评论分页（每页全部回复递归合并为纯文本，供网盘链接探测） */
@@ -749,4 +796,4 @@ async function getThumbMeta(id) {
   return { id: vid, fileId, thumbnail: n };
 }
 
-module.exports = { getXVersion, checkLogin, getVideoInfo, listVideos, getUserProfile, getComments, ensureAccessToken, listFollowing, listFollowingPage, likeVideo, followUser, autoLikeFollow, thumbnailUrl, fetchThumbnail, getThumbMeta, isIwaraPlaceholder, API_HOST, DEFAULT_UA, getCfIp };
+module.exports = { getXVersion, checkLogin, getVideoInfo, listVideos, getUserProfile, getComments, ensureAccessToken, listFollowing, listFollowingPage, likeVideo, followUser, autoLikeFollow, thumbnailUrl, fetchThumbnail, fetchAvatar, getThumbMeta, isIwaraPlaceholder, API_HOST, DEFAULT_UA, getCfIp };

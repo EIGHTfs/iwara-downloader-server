@@ -23,6 +23,7 @@ const deviceCheck = require("./device-check");
 const thumbCache = require("./thumb-cache.cjs");
 
 const jsonDir = require("./json-dir");
+const profileIndex = require("./profile-index");
 const DATA_DIR = jsonDir.SERVER_DIR;
 const TASK_FILE = jsonDir.migrateRuntimeJson("download_task.json"); //userdata-manifest.json file json/download_task.json 下载任务列表
 const MAX_RETRY = 3;
@@ -112,6 +113,25 @@ let task = {
   doneBytes: 0
 };
 let activeDownloads = 0;
+let loopRunning = false;
+const liveReqs = new Map(); // id -> https.ClientRequest  直连下载可 abort
+
+function abortItemDownload(item) {
+  const id = item && item.id;
+  if (!id) return;
+  const req = liveReqs.get(id);
+  if (!req) return;
+  try { req.destroy(new Error(item._halt === "paused" ? "PAUSED" : "STOPPED")); } catch (_) {}
+}
+
+function haltReason(item, e) {
+  if (item && item._halt === "paused") return "PAUSED";
+  if (item && item._halt === "stopped") return "STOPPED";
+  const m = String(e && e.message || e || "");
+  if (m === "PAUSED" || m === "STOPPED") return m;
+  return "";
+}
+
 
 // ---------- 工具 ----------
 function sanitizeFileName(name) {
@@ -263,6 +283,7 @@ function downloadToFile(item, onProgress) {
           if (res.statusCode === 403 || res.statusCode === 404 || (res.statusCode !== 200 && res.statusCode !== 206)) {
             res.resume();
             cdnMarkFail(host); // 失败 → 写入 BAD 列表
+            if (item._halt) return reject(new Error(item._halt === "paused" ? "PAUSED" : "STOPPED"));
             if (ci < candidates.length) {
               console.log(`[downloader] ${host} → HTTP ${res.statusCode}，换子域重试 (${ci}/${candidates.length})`);
               return attempt();
@@ -275,6 +296,10 @@ function downloadToFile(item, onProgress) {
           let done = writeStart;
           const stream = fs.createWriteStream(tmpFile, { flags: mode });
           res.on("data", (c) => {
+            if (item._halt) {
+              try { req.destroy(new Error(item._halt === "paused" ? "PAUSED" : "STOPPED")); } catch (_) {}
+              return;
+            }
             done += c.length;
             if (item.total) item.doneBytes = done - writeStart + (item.baseBytes || 0);
             if (onProgress) onProgress({ done, total: item.total });
@@ -292,6 +317,7 @@ function downloadToFile(item, onProgress) {
               }
               fs.renameSync(tmpFile, item.savePath);
               cdnMarkSuccess(host); // 成功 → 写入 GOOD 列表
+              liveReqs.delete(item.id);
               resolve("done");
             } catch (e) {
               reject(e);
@@ -301,12 +327,16 @@ function downloadToFile(item, onProgress) {
           req.on("error", (e) => reject(e));
         }
       );
+      liveReqs.set(item.id, req);
       req.setTimeout(30000, () => {
         try {
           req.destroy(new Error("连接超时"));
         } catch (_) {}
       });
       req.on("error", (e) => {
+        liveReqs.delete(item.id);
+        const halt = haltReason(item, e);
+        if (halt) return reject(new Error(halt));
         // 连接级错误（socket hang up / ECONNRESET 等）→ 换子域重试
         cdnMarkFail(host);
         if (ci < candidates.length) {
@@ -752,21 +782,40 @@ function ensureAria2Monitor() {
 // 【思路】gbmd 用 N 个 consume() 并行 executeDownloadItem；iwara 这边把「解析直链 + 下载」拆成 processOneItem，
 //   启动 min(concurrency, pending) 个 worker。列表闪名是因为 applyParsedName 改 title/file 后前端 1.5s 全量 innerHTML 重绘，
 //   下一提交单独修渲染；本提交只修并发，让配置的 concurrency 真正同时跑。
+function shouldHaltItem(item) {
+  if (item._halt === "paused" || task.status === "paused") {
+    item.state = "paused";
+    item.error = "已暂停";
+    item._halt = "";
+    return true;
+  }
+  if (item._halt === "stopped" || task.status === "idle") {
+    item.state = "stopped";
+    item.error = "已终止";
+    item._halt = "";
+    return true;
+  }
+  return false;
+}
+
 async function processOneItem(item) {
   const c = cfg.readConfig();
   try {
     item.state = "downloading";
     saveTask();
+    if (shouldHaltItem(item)) return;
 
     if (c.downloadBackend === "aria2") {
       const info = await api.getVideoInfo(item.id);
       applyParsedName(item, info, c);
+      profileIndex.upsertFromInfo(info).catch(function () {});
       item.url = info.downloadUrl;
       if (info.file && info.file.size) item.total = info.file.size;
       if (!item.url) throw new Error("无法获取下载链接: " + (info.error || "未知"));
       await api.autoLikeFollow(info);
       const toggles = cfg.normalizeDownloadToggles(c.downloadToggles);
       if (toggles.video) {
+        if (shouldHaltItem(item)) return;
         try {
           const gid = await aria2Add(item);
           item.aria2Gid = gid;
@@ -801,6 +850,7 @@ async function processOneItem(item) {
 
     const info = await api.getVideoInfo(item.id);
     applyParsedName(item, info, c);
+    profileIndex.upsertFromInfo(info).catch(function () {});
     item.url = info.downloadUrl;
     if (info.file && info.file.size) item.total = info.file.size;
     if (!item.url) throw new Error("无法获取下载链接: " + (info.error || "未知"));
@@ -821,6 +871,7 @@ async function processOneItem(item) {
       markSkipped(item, "文件已存在，跳过");
       return;
     }
+    if (shouldHaltItem(item)) return;
     const result = await downloadToFile(item, (p) => {
       item.doneBytes = p.done;
       item.progress = item.total ? Math.min(99, Math.round((p.done / item.total) * 100)) : 0;
@@ -835,6 +886,22 @@ async function processOneItem(item) {
       await thumbCache.ensureFromInfo(item.id, info, item.savePath);
     }
   } catch (e) {
+    const halt = haltReason(item, e);
+    // 用户原话：「任务列表的暂停，继续，终止不好用」——暂停/终止不能记成失败去重试
+    if (halt === "PAUSED") {
+      item.state = "paused";
+      item.error = "已暂停";
+      item._halt = "";
+      liveReqs.delete(item.id);
+      return;
+    }
+    if (halt === "STOPPED") {
+      item.state = "stopped";
+      item.error = "已终止";
+      item._halt = "";
+      liveReqs.delete(item.id);
+      return;
+    }
     item.error = String(e.message || e);
     item.retries = (item.retries || 0) + 1;
     if (item.retries <= MAX_RETRY && task.status === "running") {
@@ -847,6 +914,7 @@ async function processOneItem(item) {
       task.failed++;
     }
   } finally {
+    liveReqs.delete(item.id);
     if (activeDownloads > 0) activeDownloads--;
     saveTask();
   }
@@ -854,6 +922,9 @@ async function processOneItem(item) {
 
 async function runDownloadLoop() {
   if (task.status !== "running") return;
+  if (loopRunning) return;
+  loopRunning = true;
+  try {
   const c = cfg.readConfig();
   const concurrency = Math.max(1, Math.min(8, parseInt(c.concurrency, 10) || 3));
 
@@ -892,10 +963,18 @@ async function runDownloadLoop() {
   }
 
   const aria2Live = (task.items || []).some((it) => it.aria2Gid && (it.state === "downloading" || it.state === "paused"));
-  if (task.status === "running" && !aria2Live) {
+  const pendingLeft = (task.items || []).some((it) => it.state === "pending");
+  if (task.status === "running" && !aria2Live && !pendingLeft) {
     task.status = "idle";
     saveTask();
     console.log(`[downloader] 任务结束：完成 ${task.completed}，失败 ${task.failed}`);
+  }
+  } finally {
+    loopRunning = false;
+  }
+  // 暂停期间 abort 后旧 loop 退出；继续时若新 loop 没抢到锁则这里补开
+  if (task.status === "running" && (task.items || []).some((it) => it.state === "pending")) {
+    runDownloadLoop().catch((e) => console.error("[downloader] loop error:", e));
   }
 }
 
@@ -1000,49 +1079,130 @@ function stopAria2Monitor() {
   }
 }
 
-function pauseTask() {
-  // 2026-09-04：暂停要真停 aria2。用户原话「aria2功能做完了吗」。
-  // 【原代码】只改 task.status=paused，aria2 继续下。
-  // 【思路】对每个 gid 调 aria2.pause；失败不挡本地暂停态。
-  if (task.status === "running") {
-    task.status = "paused";
-    for (const gid of aria2Gids()) {
-      aria2Rpc("aria2.pause", [gid]).catch((e) => console.error("[downloader] aria2.pause", gid, e && e.message || e));
-    }
-    saveTask();
+function findItem(id) {
+  const vid = String(id || "").trim();
+  if (!vid) return null;
+  return (task.items || []).find((it) => it.id === vid) || null;
+}
+
+function hasDownloading() {
+  return (task.items || []).some((it) => it.state === "downloading");
+}
+
+async function pauseItem(id) {
+  const it = findItem(id);
+  if (!it) return task.status;
+  if (it.state !== "downloading") return task.status;
+  it._halt = "paused";
+  abortItemDownload(it);
+  if (it.aria2Gid) {
+    await aria2Rpc("aria2.pause", [it.aria2Gid]).catch((e) => console.error("[downloader] aria2.pause", it.aria2Gid, e && e.message || e));
   }
+  it.state = "paused";
+  it.error = "已暂停";
+  if (!hasDownloading() && task.status === "running") task.status = "paused";
+  saveTask();
   return task.status;
 }
 
-function resumeTask() {
-  if (task.status === "paused") {
+async function resumeItem(id) {
+  const it = findItem(id);
+  if (!it) return task.status;
+  if (it.state !== "paused" && it.state !== "stopped") return task.status;
+  it._halt = "";
+  it.error = "";
+  if (it.aria2Gid && it.state === "paused") {
+    await aria2Rpc("aria2.unpause", [it.aria2Gid]).catch((e) => console.error("[downloader] aria2.unpause", it.aria2Gid, e && e.message || e));
+    it.state = "downloading";
+    ensureAria2Monitor();
+  } else {
+    it.aria2Gid = "";
+    it.state = "pending";
+  }
+  if (task.status !== "running") {
     task.status = "running";
-    if (task.idx >= task.items.length) task.idx = 0;
-    const gids = aria2Gids();
-    for (const gid of gids) {
-      aria2Rpc("aria2.unpause", [gid]).catch((e) => console.error("[downloader] aria2.unpause", gid, e && e.message || e));
-    }
-    if (gids.length) ensureAria2Monitor();
-    saveTask();
     runDownloadLoop().catch((e) => console.error("[downloader] loop error:", e));
   }
+  saveTask();
   return task.status;
 }
 
-function stopTask() {
-  // 2026-09-04：停止要从 aria2 队列拿掉。用户原话「aria2功能做完了吗」。
-  // 【原代码】只 idle，gid 还在 aria2 里继续下。
-  // 【思路】forceRemove 每条 gid；清监控。
-  const gids = aria2Gids();
-  for (const gid of gids) {
-    aria2Rpc("aria2.forceRemove", [gid]).catch((e) => console.error("[downloader] aria2.forceRemove", gid, e && e.message || e));
+async function stopItem(id) {
+  const it = findItem(id);
+  if (!it) return task.status;
+  if (it.state !== "downloading" && it.state !== "paused") return task.status;
+  it._halt = "stopped";
+  abortItemDownload(it);
+  if (it.aria2Gid) {
+    await aria2Rpc("aria2.forceRemove", [it.aria2Gid]).catch((e) => console.error("[downloader] aria2.forceRemove", it.aria2Gid, e && e.message || e));
+    it.aria2Gid = "";
   }
+  it.state = "stopped";
+  it.error = "已终止";
+  saveTask();
+  return task.status;
+}
+
+async function pauseTask(id) {
+  // 用户原话：「任务列表的暂停，继续，终止不好用（点了暂停，无法继续也无法终止按钮没及时切换状态）且没有单条任务的暂停继续」
+  // 【原代码】只改 task.status=paused，直连 HTTP 不停；aria2.pause 不 await；前端不即时刷新。
+  // 【改为】有 id 只暂停这一条；全局暂停 abort 直连 + await aria2.pause，状态立刻 paused。
+  if (id) return pauseItem(id);
+  task.status = "paused";
+  const jobs = [];
   for (const it of task.items || []) {
-    if (it.aria2Gid && (it.state === "downloading" || it.state === "paused")) {
+    if (it.state !== "downloading") continue;
+    it._halt = "paused";
+    abortItemDownload(it);
+    it.state = "paused";
+    it.error = "已暂停";
+    if (it.aria2Gid) jobs.push(aria2Rpc("aria2.pause", [it.aria2Gid]).catch((e) => console.error("[downloader] aria2.pause", it.aria2Gid, e && e.message || e)));
+  }
+  await Promise.all(jobs);
+  saveTask();
+  return task.status;
+}
+
+async function resumeTask(id) {
+  if (id) return resumeItem(id);
+  const paused = (task.items || []).filter((it) => it.state === "paused");
+  if (task.status !== "paused" && !paused.length) return task.status;
+  task.status = "running";
+  if (task.idx >= task.items.length) task.idx = 0;
+  const jobs = [];
+  for (const it of paused) {
+    it._halt = "";
+    it.error = "";
+    if (it.aria2Gid) {
+      jobs.push(aria2Rpc("aria2.unpause", [it.aria2Gid]).catch((e) => console.error("[downloader] aria2.unpause", it.aria2Gid, e && e.message || e)));
+      it.state = "downloading";
+    } else {
       it.state = "pending";
-      it.error = "已停止（已从 Aria2 移除）";
     }
   }
+  await Promise.all(jobs);
+  if (jobs.length) ensureAria2Monitor();
+  saveTask();
+  runDownloadLoop().catch((e) => console.error("[downloader] loop error:", e));
+  return task.status;
+}
+
+async function stopTask(id) {
+  // 用户原话：「也不能通过终止」——终止必须真正掐掉直连请求并从 aria2 拿掉。
+  if (id) return stopItem(id);
+  const jobs = [];
+  for (const it of task.items || []) {
+    if (it.state !== "downloading" && it.state !== "paused") continue;
+    it._halt = "stopped";
+    abortItemDownload(it);
+    if (it.aria2Gid) {
+      jobs.push(aria2Rpc("aria2.forceRemove", [it.aria2Gid]).catch((e) => console.error("[downloader] aria2.forceRemove", it.aria2Gid, e && e.message || e)));
+      it.aria2Gid = "";
+    }
+    it.state = "pending";
+    it.error = "已停止";
+  }
+  await Promise.all(jobs);
   stopAria2Monitor();
   task.status = "idle";
   saveTask();
@@ -1117,6 +1277,6 @@ cdnLoadState();
 module.exports = {
   getTask, restorePendingTask,
   startDownloadTask, pauseTask, resumeTask, stopTask, setConcurrency, retryFailed, removeCompleted, removeItem, clearFailed,
-  sanitizeFileName, fmtSize,
+  sanitizeFileName, fmtSize, applyFileNameTemplate,
   aria2AddIndexJson
 };

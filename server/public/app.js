@@ -144,9 +144,30 @@ function bindBatch() {
 }
 
 function bindProgress() {
-  $("#pauseBtn").addEventListener("click", () => api("/api/task/pause", "POST", {}));
-  $("#resumeBtn").addEventListener("click", () => api("/api/task/resume", "POST", {}));
-  $("#stopBtn").addEventListener("click", () => api("/api/task/stop", "POST", {}));
+  // 用户原话：「点了暂停，无法继续也无法终止按钮没及时切换状态」
+  // 【原代码】pause/resume/stop 只 POST，等 1.5s 轮询才改按钮。
+  // 【改为】点完立刻拉 /api/task 重绘，对照 gbmd refreshTask。
+  async function refreshTask() {
+    try {
+      const t = await api("/api/task");
+      renderTask(t.task);
+    } catch (_) {}
+  }
+  $("#pauseBtn").addEventListener("click", async () => {
+    $("#pauseBtn").disabled = true;
+    await api("/api/task/pause", "POST", {});
+    await refreshTask();
+  });
+  $("#resumeBtn").addEventListener("click", async () => {
+    $("#resumeBtn").disabled = true;
+    await api("/api/task/resume", "POST", {});
+    await refreshTask();
+  });
+  $("#stopBtn").addEventListener("click", async () => {
+    $("#stopBtn").disabled = true;
+    await api("/api/task/stop", "POST", {});
+    await refreshTask();
+  });
   $("#retryBtn").addEventListener("click", async () => {
     const r = await api("/api/task/retry", "POST", {});
     if (r && r.ok) showFeedback("已重试失败项", "ok");
@@ -179,6 +200,31 @@ function bindProgress() {
         const r = await api("/api/task/retry", "POST", { id });
         if (r && r.ok) showFeedback("已重试", "ok");
         else showFeedback((r && r.error) || "重试失败", "err");
+        try { const t = await api("/api/task"); renderTask(t.task); } catch (_) {}
+        return;
+      }
+      const pauseOne = ev.target && ev.target.closest && ev.target.closest("button.mm-pause-btn");
+      if (pauseOne) {
+        const id = pauseOne.getAttribute("data-id");
+        if (!id) return;
+        await api("/api/task/pause", "POST", { id });
+        try { const t = await api("/api/task"); renderTask(t.task); } catch (_) {}
+        return;
+      }
+      const resumeOne = ev.target && ev.target.closest && ev.target.closest("button.mm-resume-btn");
+      if (resumeOne) {
+        const id = resumeOne.getAttribute("data-id");
+        if (!id) return;
+        await api("/api/task/resume", "POST", { id });
+        try { const t = await api("/api/task"); renderTask(t.task); } catch (_) {}
+        return;
+      }
+      const stopOne = ev.target && ev.target.closest && ev.target.closest("button.mm-stop-btn");
+      if (stopOne) {
+        const id = stopOne.getAttribute("data-id");
+        if (!id) return;
+        await api("/api/task/stop", "POST", { id });
+        try { const t = await api("/api/task"); renderTask(t.task); } catch (_) {}
         return;
       }
       const skipBtn = ev.target && ev.target.closest && ev.target.closest("button.mm-skip-btn");
@@ -427,7 +473,17 @@ function renderTask(task) {
     if (it.id) {
       actBtns += '<a class="mm-play-btn" href="/' + encodeURIComponent(it.id) + '" target="_blank" rel="noopener" title="本地播放">▶ 播放</a>';
     }
-    if (it.id && (it.state === "failed" || it.state === "error")) {
+    // 用户原话：「且没有单条任务的暂停继续，也不能通过终止」
+    if (it.id && it.state === "downloading") {
+      actBtns += '<button type="button" class="mm-pause-btn" data-id="' + esc(it.id) + '" title="暂停这一条">⏸ 暂停</button>' +
+        '<button type="button" class="mm-stop-btn" data-id="' + esc(it.id) + '" title="终止这一条（不删文件）">⏹ 终止</button>';
+    } else if (it.id && it.state === "paused") {
+      actBtns += '<button type="button" class="mm-resume-btn" data-id="' + esc(it.id) + '" title="继续这一条">▶ 继续</button>' +
+        '<button type="button" class="mm-stop-btn" data-id="' + esc(it.id) + '" title="终止这一条（不删文件）">⏹ 终止</button>';
+    } else if (it.id && it.state === "stopped") {
+      actBtns += '<button type="button" class="mm-resume-btn" data-id="' + esc(it.id) + '" title="重新入队">▶ 继续</button>' +
+        '<button type="button" class="mm-skip-btn" data-id="' + esc(it.id) + '" title="从列表移除（不删文件）">🚫 移除</button>';
+    } else if (it.id && (it.state === "failed" || it.state === "error")) {
       actBtns += '<button type="button" class="mm-retry-btn" data-id="' + esc(it.id) + '" title="重试下载此视频">🔄 重试</button>' +
         '<button type="button" class="mm-skip-btn" data-id="' + esc(it.id) + '" title="从列表移除（不删文件）">🚫 移除</button>';
     } else if (it.id && (it.state === "done" || it.state === "skipped" || it.state === "submitted")) {
@@ -1139,6 +1195,35 @@ function bindSettings() {
     } catch (e) {
       setStatus(st, "导出失败: " + (e && e.message || e), "err");
     }
+  });
+  async function runRename(dryRun) {
+    const st = $("#renameStatus");
+    const el = $("#renamePlan");
+    if (st) st.textContent = dryRun ? "扫描中…" : "执行中…";
+    try {
+      const r = await api("/api/rename-files", "POST", { dryRun: dryRun });
+      if (!r.ok) throw new Error(r.error || "失败");
+      if (dryRun) {
+        const rows = (r.plan || []).slice(0, 200).map((row) => {
+          const warn = row.exists ? " ⚠目标已存在" : "";
+          return "<div class=\"item\"><span class=\"item-name\">" + esc(row.fromName) + " → " + esc(row.toName) + warn + "</span></div>";
+        }).join("");
+        if (el) el.innerHTML = rows || "<div class=\"empty\">没有需要改名的文件</div>";
+        if (st) st.textContent = "待改名 " + (r.count || 0) + " 个" + (r.skipped ? "，跳过 " + r.skipped : "");
+      } else {
+        if (st) st.textContent = "已改名 " + (r.renamed || 0) + "，失败 " + (r.failed || 0);
+        if (el && r.errors && r.errors.length) {
+          el.innerHTML = r.errors.map((e) => "<div class=\"item fail\">" + esc(e.from) + "：" + esc(e.error) + "</div>").join("");
+        }
+      }
+    } catch (e) {
+      if (st) st.textContent = e.message || String(e);
+    }
+  }
+  if ($("#renamePreviewBtn")) $("#renamePreviewBtn").addEventListener("click", () => runRename(true));
+  if ($("#renameGoBtn")) $("#renameGoBtn").addEventListener("click", async () => {
+    if (!confirm("按当前模板批量重命名？目标已存在的会跳过。")) return;
+    await runRename(false);
   });
   $("#importIndexBtn").addEventListener("click", () => { $("#importIndexFile").click(); });
   $("#importIndexFile").addEventListener("change", async (ev) => {
