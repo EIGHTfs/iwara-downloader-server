@@ -495,9 +495,8 @@ function thumbnailUrl(v) {
 }
 
 /** 封面图字节（IP 直连 i.iwara.tv） */
-function fetchThumbnail(fileId, n) {
-  const idx = Number.isFinite(Number(n)) ? Number(n) : 0;
-  const url = `https://i.iwara.tv/image/thumbnail/${fileId}/thumbnail-${idx}.jpg`;
+function fetchOneThumbnail(fileId, name) {
+  const url = "https://i.iwara.tv/image/thumbnail/" + fileId + "/" + name;
   return new Promise((resolve, reject) => {
     const u = new URL(url);
     const req = https.request({
@@ -524,6 +523,27 @@ function fetchThumbnail(fileId, n) {
     req.on("error", reject);
     req.end();
   });
+}
+
+function fetchThumbnail(fileId, n) {
+  // 2026-09-04：官方封面文件名可能是 thumbnail-1.jpg 或 thumbnail-01.jpg。
+  // 【原代码】只拼 thumbnail-${idx}.jpg
+  // 【改为】用户原话「搜索列表有些加载不出正确封面」「搜搜列表封面本来就走的官方」
+  // 【思路】部分条目 n=1 和 n=0 拉到同一张小图，补零再试一次。
+  const idx = Number.isFinite(Number(n)) ? Number(n) : 0;
+  const names = ["thumbnail-" + idx + ".jpg"];
+  const pad = "thumbnail-" + String(idx).padStart(2, "0") + ".jpg";
+  if (names.indexOf(pad) < 0) names.push(pad);
+  return (async () => {
+    let lastErr = null;
+    for (const name of names) {
+      try {
+        const img = await fetchOneThumbnail(fileId, name);
+        if (img && img.buf && img.buf.length > 32) return img;
+      } catch (e) { lastErr = e; }
+    }
+    throw lastErr || new Error("无官方封面");
+  })();
 }
 
 /**

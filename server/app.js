@@ -305,17 +305,19 @@ const server = http.createServer(async (req, res) => {
       const id = String(parsed.query.id || "").trim();
       const fileId = String(parsed.query.file || "").trim();
       const n = String(parsed.query.n || "0");
-      // 前台直接读缓存：请求路径不抽帧。缺图时后台补，这次 404。
-      let img = id ? thumbCache.readThumb(id) : null;
-      if (!img && fileId) {
+      // 2026-09-04：搜索列表封面走官方。
+      // 【原代码】先 readThumb(id)，有本地抽帧就直接返回，file 参数被忽略。
+      // 【改为】用户原话「搜索列表有些加载不出正确封面」「搜搜列表封面本来就走的官方」
+      // 【思路】thumbSrc 带了 id+file，但本地 ffmpeg 帧和 i.iwara.tv 官方封面不是同一张。
+      //   有 file 时先 fetchThumbnail；不 writeThumb 覆盖播放页用的本地抽帧。官方失败再退回本地。
+      let img = null;
+      if (fileId) {
         try {
           const remote = await api.fetchThumbnail(fileId, n);
-          if (remote && remote.buf) {
-            if (id) thumbCache.writeThumb(id, remote.buf);
-            img = remote;
-          }
+          if (remote && remote.buf) img = remote;
         } catch (_) {}
       }
+      if (!img && id) img = thumbCache.readThumb(id);
       if (!img || !img.buf) {
         // 2026-09-04：缺封面不要回 JSON。用户原话「前端正常刷新封面了，刷新又没了」。
         // 【原代码】sendJson(res, 404, { ok: false, error: "无封面" })

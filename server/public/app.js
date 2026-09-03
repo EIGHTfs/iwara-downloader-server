@@ -773,7 +773,7 @@ function resultItemHtml(v) {
   const href = "https://www.iwara.tv/video/" + encodeURIComponent(id);
   const src = thumbSrc(v);
   const img = src
-    ? `<img class="row-thumb" src="${esc(src)}" alt="" loading="lazy" onerror="this.style.display='none'">`
+    ? `<img class="row-thumb" src="${esc(src)}" alt="" loading="lazy" onerror="this.style.display='none'" onload="this.style.display=''">`
     : `<div class="row-thumb" style="background:var(--card2)"></div>`;
   return `<div class="result-item">
     <input type="checkbox" data-id="${esc(id)}" onclick="event.stopPropagation()">
