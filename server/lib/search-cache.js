@@ -190,7 +190,7 @@ async function doQueryLoop() {
         if (seen.has(v.id)) continue;
         seen.add(v.id);
         queryTask.results.push(v);
-        profileIndex.upsertFromVideo(v);
+        profileIndex.upsertFromVideo(v).catch(function () {});
         // 2026-09-04：搜索时拉官方封面落到 thumbs/<id>.jpg。
         // 用户原话：「搜索时，下载时从官方获取封面并按本地规范保存」
         // 【思路】入队即 enqueue，不阻塞翻页；列表只读本地，封面到了刷新即可显示。
@@ -254,7 +254,7 @@ function importCache(records) {
     if (seen.has(v.id)) continue;
     seen.add(v.id);
     norm.push(v);
-    profileIndex.upsertFromVideo(v);
+    profileIndex.upsertFromVideo(v).catch(function () {});
   }
   if (!norm.length) return { ok: false, error: "导入文件中没有带 id 的有效记录" };
 
@@ -292,7 +292,7 @@ function saveRecords(results) {
     if (!v || seen.has(v.id)) continue;
     seen.add(v.id);
     norm.push(v);
-    profileIndex.upsertFromVideo(v);
+    profileIndex.upsertFromVideo(v).catch(function () {});
   }
   const cache = getCache() || { results: [], startDate: "", endDate: "", contentFilter: ["normal", "nsfw"], queryTime: 0 };
   cache.results = norm;

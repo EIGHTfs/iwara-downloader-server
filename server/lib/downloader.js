@@ -1273,6 +1273,7 @@ function clearFailed() {
 
 // 模块加载时恢复 CDN 子域成功/失败列表（从外部文件 cdn_hosts_state.json）
 cdnLoadState();
+profileIndex.backfillMissing().catch(function () {});
 
 module.exports = {
   getTask, restorePendingTask,
