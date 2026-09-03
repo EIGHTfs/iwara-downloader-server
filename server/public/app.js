@@ -209,7 +209,116 @@ function startTaskPoll() {
   taskPollTimer = setInterval(tick, 1500);
 }
 
+// function renderTask(task) {
+//   const stateText = { running: "下载中", idle: "空闲", paused: "已暂停" };
+//   $("#taskState").textContent = task ? (stateText[task.status] || task.status) : "无任务";
+//   if (!task || !(task.items || []).length) {
+//     $("#progressFill").style.width = "0%";
+//     $("#taskMeta").textContent = "尚未开始下载";
+//     $("#taskList").innerHTML = '<div class="empty">暂无任务</div>';
+//     $("#pauseBtn").disabled = true;
+//     $("#resumeBtn").disabled = true;
+//     $("#stopBtn").disabled = true;
+//     $("#retryBtn").disabled = true;
+//     if ($("#clearFailBtn")) $("#clearFailBtn").disabled = true;
+//     if ($("#clearDoneBtn")) $("#clearDoneBtn").disabled = true;
+//     return;
+//   }
+//   const items = task.items || [];
+//   const doneN = items.filter((it) => it.state === "done" || it.state === "skipped" || it.state === "submitted").length;
+//   const failN = items.filter((it) => it.state === "failed" || it.state === "error").length;
+//   const runN = items.filter((it) => it.state === "downloading").length;
+//   const pct = items.length ? Math.round((doneN / items.length) * 100) : 0;
+//   $("#progressFill").style.width = pct + "%";
+//   $("#taskMeta").textContent = "完成 " + doneN + " / " + items.length + "，失败 " + failN + (task.backend ? " · 后端 " + task.backend : "");
+//   $("#pauseBtn").disabled = task.status !== "running";
+//   $("#resumeBtn").disabled = task.status !== "paused";
+//   $("#stopBtn").disabled = task.status === "idle";
+//   $("#retryBtn").disabled = failN === 0;
+//   if ($("#clearFailBtn")) $("#clearFailBtn").disabled = failN === 0;
+//   if ($("#clearDoneBtn")) $("#clearDoneBtn").disabled = doneN === 0;
+// 
+//   const now = Date.now();
+//   const listHtml = [];
+//   for (const it of items) {
+//     const bytes = it.doneBytes || 0;
+//     let speedStr = "";
+//     if (it.state === "downloading") {
+//       const prev = lastBytes.get(it.id);
+//       if (prev && now > prev.t) {
+//         const sp = (bytes - prev.bytes) / ((now - prev.t) / 1000);
+//         speedStr = fmtSpeed(sp);
+//       }
+//       lastBytes.set(it.id, { t: now, bytes });
+//     }
+//     const icon = it.state === "done" || it.state === "skipped" || it.state === "submitted" ? "✅"
+//       : (it.state === "failed" || it.state === "error" ? "❌" : (it.state === "downloading" ? "⬇" : "•"));
+//     const cls = it.state === "failed" || it.state === "error" ? "fail" : (it.state === "downloading" ? "" : "ok");
+//     const barCls = it.state === "failed" || it.state === "error" ? "row-bar-fail"
+//       : (it.state === "downloading" ? "row-bar-active"
+//         : (it.state === "done" || it.state === "skipped" || it.state === "submitted" ? "row-bar-ok" : "row-bar-pending"));
+//     const p = Math.max(0, Math.min(100, it.progress || 0));
+//     const displayName = it.file || it.title || it.id;
+//     // 文件名模板已含标题，后面不再重复标题，只显示作者
+//     const meta = [it.author, speedStr, it.error].filter(Boolean).join(" · ");
+//     const thumb = it.id
+//       ? `<img class="row-thumb" src="/api/thumb?id=${encodeURIComponent(it.id)}" alt="" loading="lazy" onerror="this.style.display='none'">`
+//       : `<div class="row-thumb"></div>`;
+//     let actBtns = "";
+//     if (it.id) {
+//       actBtns += `<a class="mm-play-btn" href="/play.html?id=${encodeURIComponent(it.id)}" target="_blank" rel="noopener" title="本地播放">▶ 播放</a>`;
+//     }
+//     if (it.id && (it.state === "failed" || it.state === "error")) {
+//       actBtns += `<button type="button" class="mm-retry-btn" data-id="${esc(it.id)}" title="重试下载此视频">🔄 重试</button>` +
+//         `<button type="button" class="mm-skip-btn" data-id="${esc(it.id)}" title="从列表拿掉（不删文件）">🚫 跳过</button>`;
+//     } else if (it.id && (it.state === "done" || it.state === "skipped" || it.state === "submitted")) {
+//       actBtns += `<button type="button" class="mm-skip-btn" data-id="${esc(it.id)}" title="从列表拿掉（不删文件）">🚫 跳过</button>`;
+//     }
+//     const row = `<div class="item ${cls}">
+//       ${thumb}
+//       <span class="icon">${icon}</span>
+//       <span class="item-name">${esc(displayName)}
+//         <span class="row-bar ${barCls}"><span class="row-bar-fill" style="width:${p}%"></span></span>
+//       </span>
+//       <span class="status-text">${esc(it.state || "")} ${p}% ${esc(speedStr)} ${fmtSize(it.doneBytes)}${it.total ? " / " + fmtSize(it.total) : ""}${actBtns}<br>${esc(meta)}</span>
+//     </div>`;
+//     listHtml.push(row);
+//   }
+//   $("#taskList").innerHTML = listHtml.join("") || '<div class="empty">暂无任务</div>';
+// }
+
+function rowDisplayName(it) {
+  // 2026-09-03：列表闪名根因之一是 displayName = file || title || id，解析中途 title/file 轮换。
+  // 用户原话「任务会在下载列表名字闪来闪去」。稳定优先级：已解析模板文件名 > 标题 > id。
+  const id = String(it.id || "");
+  const file = String(it.file || "");
+  const title = String(it.title || "");
+  if (file && id && file.indexOf(id) >= 0 && file !== id + ".mp4") return file;
+  if (title && title !== id) return title;
+  return file || title || id;
+}
+
+function ensureTaskRow(listEl, it) {
+  let row = listEl.querySelector('[data-task-id="' + CSS.escape(it.id || "") + '"]');
+  if (row) return row;
+  row = document.createElement("div");
+  row.className = "item";
+  row.setAttribute("data-task-id", it.id || "");
+  row.innerHTML =
+    '<div class="row-thumb"></div>' +
+    '<span class="icon"></span>' +
+    '<span class="item-name"></span>' +
+    '<span class="status-text"></span>';
+  listEl.appendChild(row);
+  return row;
+}
+
 function renderTask(task) {
+  // 2026-09-03 修改：任务列表按行更新，不再每 1.5s innerHTML 整表重绘。
+  // 【原代码】$("#taskList").innerHTML = listHtml.join("")
+  // 【改为】用户原话「任务会在下载列表名字闪来闪去，对比 gamebanana-mods-downloader-server 找出原因」
+  // 【思路】gbmd 有指纹缓存避免无变化重绘；iwara 这边名字闪是因为 applyParsedName 改 title/file 后整表销毁重建。
+  //   按 data-task-id 复用行，只改进度/状态/稳定文件名。
   const stateText = { running: "下载中", idle: "空闲", paused: "已暂停" };
   $("#taskState").textContent = task ? (stateText[task.status] || task.status) : "无任务";
   if (!task || !(task.items || []).length) {
@@ -227,7 +336,6 @@ function renderTask(task) {
   const items = task.items || [];
   const doneN = items.filter((it) => it.state === "done" || it.state === "skipped" || it.state === "submitted").length;
   const failN = items.filter((it) => it.state === "failed" || it.state === "error").length;
-  const runN = items.filter((it) => it.state === "downloading").length;
   const pct = items.length ? Math.round((doneN / items.length) * 100) : 0;
   $("#progressFill").style.width = pct + "%";
   $("#taskMeta").textContent = "完成 " + doneN + " / " + items.length + "，失败 " + failN + (task.backend ? " · 后端 " + task.backend : "");
@@ -239,8 +347,12 @@ function renderTask(task) {
   if ($("#clearDoneBtn")) $("#clearDoneBtn").disabled = doneN === 0;
 
   const now = Date.now();
-  const listHtml = [];
+  const listEl = $("#taskList");
+  if (listEl.querySelector(".empty")) listEl.innerHTML = "";
+  const seen = new Set();
   for (const it of items) {
+    if (!it.id) continue;
+    seen.add(it.id);
     const bytes = it.doneBytes || 0;
     let speedStr = "";
     if (it.state === "downloading") {
@@ -258,34 +370,69 @@ function renderTask(task) {
       : (it.state === "downloading" ? "row-bar-active"
         : (it.state === "done" || it.state === "skipped" || it.state === "submitted" ? "row-bar-ok" : "row-bar-pending"));
     const p = Math.max(0, Math.min(100, it.progress || 0));
-    const displayName = it.file || it.title || it.id;
-    // 文件名模板已含标题，后面不再重复标题，只显示作者
+    const displayName = rowDisplayName(it);
     const meta = [it.author, speedStr, it.error].filter(Boolean).join(" · ");
-    const thumb = it.id
-      ? `<img class="row-thumb" src="/api/thumb?id=${encodeURIComponent(it.id)}" alt="" loading="lazy" onerror="this.style.display='none'">`
-      : `<div class="row-thumb"></div>`;
+    const row = ensureTaskRow(listEl, it);
+    row.className = "item " + cls;
+    let thumb = row.querySelector(".row-thumb");
+    if (thumb && thumb.tagName !== "IMG") {
+      const img = document.createElement("img");
+      img.className = "row-thumb";
+      img.alt = "";
+      img.loading = "lazy";
+      img.onerror = function () { this.style.display = "none"; };
+      img.src = "/api/thumb?id=" + encodeURIComponent(it.id);
+      row.replaceChild(img, thumb);
+      thumb = img;
+    }
+    const iconEl = row.querySelector(".icon");
+    if (iconEl) iconEl.textContent = icon;
+    let nameEl = row.querySelector(".item-name");
+    if (nameEl) {
+      let bar = nameEl.querySelector(".row-bar");
+      if (!bar) {
+        nameEl.textContent = displayName;
+        bar = document.createElement("span");
+        bar.innerHTML = '<span class="row-bar-fill" style="width:0%"></span>';
+        nameEl.appendChild(bar);
+      } else if (nameEl.firstChild && nameEl.firstChild.nodeType === 3) {
+        if (nameEl.firstChild.textContent !== displayName) nameEl.firstChild.textContent = displayName;
+      } else {
+        nameEl.insertBefore(document.createTextNode(displayName), bar);
+      }
+      bar.className = "row-bar " + barCls;
+      const fill = bar.querySelector(".row-bar-fill");
+      if (fill) fill.style.width = p + "%";
+    }
     let actBtns = "";
     if (it.id) {
-      actBtns += `<a class="mm-play-btn" href="/play.html?id=${encodeURIComponent(it.id)}" target="_blank" rel="noopener" title="本地播放">▶ 播放</a>`;
+      actBtns += '<a class="mm-play-btn" href="/play.html?id=' + encodeURIComponent(it.id) + '" target="_blank" rel="noopener" title="本地播放">▶ 播放</a>';
     }
     if (it.id && (it.state === "failed" || it.state === "error")) {
-      actBtns += `<button type="button" class="mm-retry-btn" data-id="${esc(it.id)}" title="重试下载此视频">🔄 重试</button>` +
-        `<button type="button" class="mm-skip-btn" data-id="${esc(it.id)}" title="从列表拿掉（不删文件）">🚫 跳过</button>`;
+      actBtns += '<button type="button" class="mm-retry-btn" data-id="' + esc(it.id) + '" title="重试下载此视频">🔄 重试</button>' +
+        '<button type="button" class="mm-skip-btn" data-id="' + esc(it.id) + '" title="从列表拿掉（不删文件）">🚫 跳过</button>';
     } else if (it.id && (it.state === "done" || it.state === "skipped" || it.state === "submitted")) {
-      actBtns += `<button type="button" class="mm-skip-btn" data-id="${esc(it.id)}" title="从列表拿掉（不删文件）">🚫 跳过</button>`;
+      actBtns += '<button type="button" class="mm-skip-btn" data-id="' + esc(it.id) + '" title="从列表拿掉（不删文件）">🚫 跳过</button>';
     }
-    const row = `<div class="item ${cls}">
-      ${thumb}
-      <span class="icon">${icon}</span>
-      <span class="item-name">${esc(displayName)}
-        <span class="row-bar ${barCls}"><span class="row-bar-fill" style="width:${p}%"></span></span>
-      </span>
-      <span class="status-text">${esc(it.state || "")} ${p}% ${esc(speedStr)} ${fmtSize(it.doneBytes)}${it.total ? " / " + fmtSize(it.total) : ""}${actBtns}<br>${esc(meta)}</span>
-    </div>`;
-    listHtml.push(row);
+    const statusEl = row.querySelector(".status-text");
+    if (statusEl) {
+      const text = (it.state || "") + " " + p + "% " + speedStr + " " + fmtSize(it.doneBytes) + (it.total ? " / " + fmtSize(it.total) : "");
+      if (statusEl.getAttribute("data-act") !== actBtns || statusEl.getAttribute("data-meta") !== meta) {
+        statusEl.setAttribute("data-act", actBtns);
+        statusEl.setAttribute("data-meta", meta);
+        statusEl.innerHTML = esc(text) + actBtns + "<br>" + esc(meta);
+      } else {
+        const first = statusEl.childNodes[0];
+        if (first && first.nodeType === 3) first.textContent = text + " ";
+        else statusEl.innerHTML = esc(text) + actBtns + "<br>" + esc(meta);
+      }
+    }
   }
-  $("#taskList").innerHTML = listHtml.join("") || '<div class="empty">暂无任务</div>';
+  Array.from(listEl.querySelectorAll("[data-task-id]")).forEach((el) => {
+    if (!seen.has(el.getAttribute("data-task-id"))) el.remove();
+  });
 }
+
 
 function videoId(v) {
   return String((v && (v.id || v.modId)) || "");
