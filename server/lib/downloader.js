@@ -125,6 +125,22 @@ function sanitizeFileName(name) {
  * @param {string} template
  * @param {Object} info - getVideoInfo 返回的视频信息
  */
+function applyParsedName(item, info, c) {
+  // 【原代码】解析后只改 item.file，任务列表仍用入队时的 title/id。【改为】用户原话「任务列表里面显示的不是按解析后的名字」【思路】把 Iwara 标题和模板文件名写回任务项，进度页才能显示解析名
+  if (info.title) item.title = info.title;
+  if (info.author) item.author = info.author;
+  if (info.alias) item.alias = info.alias;
+  if (info.quality) item.quality = info.quality;
+  item.file = applyFileNameTemplate((c && c.fileNameTemplate) || "", {
+    title: info.title || item.title,
+    alias: info.alias || "",
+    id: item.id,
+    author: info.author || item.author,
+    quality: info.quality || "",
+    uploadTime: info.uploadTime
+  });
+}
+
 function applyFileNameTemplate(template, info) {
   const now = new Date();
   const upload = info.uploadTime ? new Date(info.uploadTime) : now;
@@ -523,25 +539,18 @@ async function runDownloadLoop() {
       if (existing) {
         item.file = path.basename(existing);
         item.savePath = existing;
+        if (!item.title || item.title === item.id) item.title = item.file.replace(/\.(mp4|webm|mov|mkv)$/i, "");
         markSkipped(item, "文件已存在，跳过");
       } else if (c.downloadBackend === "aria2" && await aria2AlreadyHas(item.id, item.file)) {
         markSkipped(item, "Aria2 已有此文件，跳过");
       } else if (c.downloadBackend === "aria2") {
         // aria2：也先取 fresh 链接（下载链接会到期，不能复用旧 URL）
         const info = await api.getVideoInfo(item.id);
+        applyParsedName(item, info, c);
         item.url = info.downloadUrl;
         if (info.file && info.file.size) item.total = info.file.size;
         if (!item.url) throw new Error("无法获取下载链接: " + (info.error || "未知"));
         await api.autoLikeFollow(info);
-        // 用文件名模板生成文件名（aria2 的 out 选项）
-        item.file = applyFileNameTemplate(c.fileNameTemplate, {
-          title: info.title || item.title,
-          alias: info.alias || "",
-          id: item.id,
-          author: info.author || item.author,
-          quality: info.quality || "",
-          uploadTime: info.uploadTime
-        });
         if (await aria2AlreadyHas(item.id, item.file)) {
           markSkipped(item, "Aria2 已有此文件，跳过");
         } else {
@@ -569,19 +578,11 @@ async function runDownloadLoop() {
       } else {
         // direct：每次下载都重新解析直链 —— 下载链接会到期，必须用 fresh 链接
         const info = await api.getVideoInfo(item.id);
+        applyParsedName(item, info, c);
         item.url = info.downloadUrl;
         if (info.file && info.file.size) item.total = info.file.size;
         if (!item.url) throw new Error("无法获取下载链接: " + (info.error || "未知"));
         await api.autoLikeFollow(info);
-        // 用文件名模板重新生成文件名/保存路径（学油猴脚本，用户可自定义模板）
-        item.file = applyFileNameTemplate(c.fileNameTemplate, {
-          title: info.title || item.title,
-          alias: info.alias || "",
-          id: item.id,
-          author: info.author || item.author,
-          quality: info.quality || "",
-          uploadTime: info.uploadTime
-        });
         const authorDir = c.useAuthorSubdir ? sanitizeFileName(info.author || item.author || "unknown") : "";
         item.savePath = authorDir ? safeJoin(c.downloadPath, path.join(authorDir, item.file)) : safeJoin(c.downloadPath, item.file);
         // 确保目录存在

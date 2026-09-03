@@ -226,14 +226,15 @@ function renderTask(task) {
       : (it.state === "downloading" ? "row-bar-active"
         : (it.state === "done" || it.state === "skipped" || it.state === "submitted" ? "row-bar-ok" : "row-bar-pending"));
     const p = Math.max(0, Math.min(100, it.progress || 0));
-    const meta = [it.author, it.file, speedStr, it.error].filter(Boolean).join(" · ");
+    const displayName = it.file || it.title || it.id;
+    const meta = [it.title && it.title !== displayName ? it.title : "", it.author, speedStr, it.error].filter(Boolean).join(" · ");
     const play = it.id
       ? `<a class="play-btn" href="/play.html?id=${encodeURIComponent(it.id)}" target="_blank" rel="noopener" title="本地播放">▶</a>`
       : "";
     const row = `<div class="item ${cls}">
       ${play}
       <span class="icon">${icon}</span>
-      <span class="item-name">${esc(it.title || it.id)}
+      <span class="item-name">${esc(displayName)}
         <span class="row-bar ${barCls}"><span class="row-bar-fill" style="width:${p}%"></span></span>
       </span>
       <span class="status-text">${esc(it.state || "")} ${p}% ${esc(speedStr)} ${fmtSize(it.doneBytes)}${it.total ? " / " + fmtSize(it.total) : ""}<br>${esc(meta)}</span>
