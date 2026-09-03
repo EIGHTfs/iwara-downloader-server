@@ -138,6 +138,7 @@ function scanPlan() {
     root,
     template: c.fileNameTemplate || "",
     videoCount: files.length,
+    indexCount: idSet.size,
     count: plan.length,
     skipped: skipped.length,
     plan,
