@@ -520,120 +520,279 @@ async function aria2Add(item) {
   return aria2Rpc("aria2.addUri", [[item.url], options]);
 }
 
+// // ---------- 任务循环 ----------
+// async function runDownloadLoop() {
+//   if (task.status !== "running") return;
+//   const c = cfg.readConfig();
+//   const concurrency = c.concurrency || 3;
+// 
+//   while (task.status === "running" && task.idx < task.items.length) {
+//     while (activeDownloads >= concurrency && task.status === "running") {
+//       await new Promise((r) => setTimeout(r, 500));
+//     }
+//     if (task.status !== "running") break;
+// 
+//     const item = task.items[task.idx];
+//     task.idx++;
+//     if (item.state !== "pending") continue;
+//     activeDownloads++;
+// 
+//     try {
+//       item.state = "downloading";
+//       saveTask();
+// 
+//       const existing = findExistingVideoFile(c.downloadPath, item.id);
+//       if (existing) {
+//         item.file = path.basename(existing);
+//         item.savePath = existing;
+//         if (!item.title || item.title === item.id) item.title = item.file.replace(/\.(mp4|webm|mov|mkv)$/i, "");
+//         markSkipped(item, "文件已存在，跳过");
+//         thumbCache.ensureThumb(item.id, { filePath: existing }).catch(() => null);
+//       } else if (c.downloadBackend === "aria2" && await aria2AlreadyHas(item.id, item.file)) {
+//         markSkipped(item, "Aria2 已有此文件，跳过");
+//       } else if (c.downloadBackend === "aria2") {
+//         // aria2：也先取 fresh 链接（下载链接会到期，不能复用旧 URL）
+//         const info = await api.getVideoInfo(item.id);
+//         applyParsedName(item, info, c);
+//         item.url = info.downloadUrl;
+//         if (info.file && info.file.size) item.total = info.file.size;
+//         if (!item.url) throw new Error("无法获取下载链接: " + (info.error || "未知"));
+//         await api.autoLikeFollow(info);
+//         if (await aria2AlreadyHas(item.id, item.file)) {
+//           markSkipped(item, "Aria2 已有此文件，跳过");
+//         } else {
+//           const toggles = cfg.normalizeDownloadToggles(c.downloadToggles);
+//           if (toggles.video) {
+//             await aria2Add(item);
+//           } else {
+//             item.error = "已跳过视频（设置未勾选）";
+//           }
+//           const packed = videoIndex.fromDownload(info, item);
+//           if (packed && toggles.json) {
+//             try {
+//               await aria2AddIndexJson(videoIndex.sidecarFileName(item.file), packed.id, packed.entry);
+//             } catch (e) {
+//               console.error("[downloader] 索引 JSON 推送 aria2 失败:", e && e.message || e);
+//             }
+//           }
+//           // aria2 异步下载，无法（简单）追踪进度 → 直接标记为已提交
+//           item.state = "submitted";
+//           item.progress = 100;
+//           if (toggles.video) item.error = "已提交至 Aria2（进度请查看 Aria2 WebUI）";
+//           task.completed++;
+//           if (toggles.json) await videoIndex.recordDownload(c.downloadPath, info, item, { writeSidecar: false });
+//         }
+//       } else {
+//         // direct：每次下载都重新解析直链 —— 下载链接会到期，必须用 fresh 链接
+//         const info = await api.getVideoInfo(item.id);
+//         applyParsedName(item, info, c);
+//         item.url = info.downloadUrl;
+//         if (info.file && info.file.size) item.total = info.file.size;
+//         if (!item.url) throw new Error("无法获取下载链接: " + (info.error || "未知"));
+//         await api.autoLikeFollow(info);
+//         const authorDir = c.useAuthorSubdir ? sanitizeFileName(info.author || item.author || "unknown") : "";
+//         item.savePath = authorDir ? safeJoin(c.downloadPath, path.join(authorDir, item.file)) : safeJoin(c.downloadPath, item.file);
+//         // 确保目录存在
+//         fs.mkdirSync(path.dirname(item.savePath), { recursive: true });
+//         const toggles = cfg.normalizeDownloadToggles(c.downloadToggles);
+//         if (!toggles.video) {
+//           item.state = "done";
+//           item.progress = 100;
+//           item.error = "已跳过视频（设置未勾选）";
+//           task.completed++;
+//           if (toggles.json) await videoIndex.recordDownload(c.downloadPath, info, item, { writeSidecar: true, sidecarOnly: true });
+//         } else if (localFileExists(item.savePath)) {
+//           markSkipped(item, "文件已存在，跳过");
+//         } else {
+//           const result = await downloadToFile(item, (p) => {
+//             item.doneBytes = p.done;
+//             item.progress = item.total ? Math.min(99, Math.round((p.done / item.total) * 100)) : 0;
+//             saveTask();
+//           });
+//           if (result === "done") {
+//             item.state = "done";
+//             item.progress = 100;
+//             item.doneBytes = item.total || 0;
+//             task.completed++;
+//             if (toggles.json) await videoIndex.recordDownload(c.downloadPath, info, item);
+//             await thumbCache.ensureFromInfo(item.id, info, item.savePath);
+//           }
+//         }
+//       }
+//     } catch (e) {
+//       item.error = String(e.message || e);
+//       item.retries = (item.retries || 0) + 1;
+//       if (item.retries <= MAX_RETRY && task.status === "running") {
+//         item.state = "pending"; // 放回队尾？简单起见：延迟重试（同位置）
+//         task.idx = Math.max(0, task.idx - 1);
+//         await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * item.retries));
+//       } else {
+//         item.state = "failed";
+//         task.failed++;
+//       }
+//     } finally {
+//       activeDownloads--;
+//       saveTask();
+//     }
+//   }
+// 
+//   if (task.status === "running") {
+//     task.status = "idle";
+//     saveTask();
+//     console.log(`[downloader] 任务结束：完成 ${task.completed}，失败 ${task.failed}`);
+//   }
+// }
+// 
+
 // ---------- 任务循环 ----------
+// 2026-09-03 修改：node 直连下载做成真实并发（对照 gbmd produce/consume）。
+// 【原代码】runDownloadLoop 单 while + await downloadToFile，activeDownloads 永远最多 1。
+// 【改为】用户原话「iwara node下载模式实际无并发，且任务会在下载列表名字闪来闪去，对比 gamebanana-mods-downloader-server 找出原因」
+// 【思路】gbmd 用 N 个 consume() 并行 executeDownloadItem；iwara 这边把「解析直链 + 下载」拆成 processOneItem，
+//   启动 min(concurrency, pending) 个 worker。列表闪名是因为 applyParsedName 改 title/file 后前端 1.5s 全量 innerHTML 重绘，
+//   下一提交单独修渲染；本提交只修并发，让配置的 concurrency 真正同时跑。
+async function processOneItem(item) {
+  const c = cfg.readConfig();
+  try {
+    item.state = "downloading";
+    saveTask();
+
+    const existing = findExistingVideoFile(c.downloadPath, item.id);
+    if (existing) {
+      item.file = path.basename(existing);
+      item.savePath = existing;
+      if (!item.title || item.title === item.id) item.title = item.file.replace(/\.(mp4|webm|mov|mkv)$/i, "");
+      markSkipped(item, "文件已存在，跳过");
+      thumbCache.ensureThumb(item.id, { filePath: existing }).catch(() => null);
+      return;
+    }
+    if (c.downloadBackend === "aria2" && await aria2AlreadyHas(item.id, item.file)) {
+      markSkipped(item, "Aria2 已有此文件，跳过");
+      return;
+    }
+    if (c.downloadBackend === "aria2") {
+      const info = await api.getVideoInfo(item.id);
+      applyParsedName(item, info, c);
+      item.url = info.downloadUrl;
+      if (info.file && info.file.size) item.total = info.file.size;
+      if (!item.url) throw new Error("无法获取下载链接: " + (info.error || "未知"));
+      await api.autoLikeFollow(info);
+      if (await aria2AlreadyHas(item.id, item.file)) {
+        markSkipped(item, "Aria2 已有此文件，跳过");
+        return;
+      }
+      const toggles = cfg.normalizeDownloadToggles(c.downloadToggles);
+      if (toggles.video) {
+        await aria2Add(item);
+      } else {
+        item.error = "已跳过视频（设置未勾选）";
+      }
+      const packed = videoIndex.fromDownload(info, item);
+      if (packed && toggles.json) {
+        try {
+          await aria2AddIndexJson(videoIndex.sidecarFileName(item.file), packed.id, packed.entry);
+        } catch (e) {
+          console.error("[downloader] 索引 JSON 推送 aria2 失败:", e && e.message || e);
+        }
+      }
+      item.state = "submitted";
+      item.progress = 100;
+      if (toggles.video) item.error = "已提交至 Aria2（进度请查看 Aria2 WebUI）";
+      task.completed++;
+      if (toggles.json) await videoIndex.recordDownload(c.downloadPath, info, item, { writeSidecar: false });
+      return;
+    }
+
+    const info = await api.getVideoInfo(item.id);
+    applyParsedName(item, info, c);
+    item.url = info.downloadUrl;
+    if (info.file && info.file.size) item.total = info.file.size;
+    if (!item.url) throw new Error("无法获取下载链接: " + (info.error || "未知"));
+    await api.autoLikeFollow(info);
+    const authorDir = c.useAuthorSubdir ? sanitizeFileName(info.author || item.author || "unknown") : "";
+    item.savePath = authorDir ? safeJoin(c.downloadPath, path.join(authorDir, item.file)) : safeJoin(c.downloadPath, item.file);
+    fs.mkdirSync(path.dirname(item.savePath), { recursive: true });
+    const toggles = cfg.normalizeDownloadToggles(c.downloadToggles);
+    if (!toggles.video) {
+      item.state = "done";
+      item.progress = 100;
+      item.error = "已跳过视频（设置未勾选）";
+      task.completed++;
+      if (toggles.json) await videoIndex.recordDownload(c.downloadPath, info, item, { writeSidecar: true, sidecarOnly: true });
+      return;
+    }
+    if (localFileExists(item.savePath)) {
+      markSkipped(item, "文件已存在，跳过");
+      return;
+    }
+    const result = await downloadToFile(item, (p) => {
+      item.doneBytes = p.done;
+      item.progress = item.total ? Math.min(99, Math.round((p.done / item.total) * 100)) : 0;
+      saveTask();
+    });
+    if (result === "done") {
+      item.state = "done";
+      item.progress = 100;
+      item.doneBytes = item.total || 0;
+      task.completed++;
+      if (toggles.json) await videoIndex.recordDownload(c.downloadPath, info, item);
+      await thumbCache.ensureFromInfo(item.id, info, item.savePath);
+    }
+  } catch (e) {
+    item.error = String(e.message || e);
+    item.retries = (item.retries || 0) + 1;
+    if (item.retries <= MAX_RETRY && task.status === "running") {
+      // 重试等待中不设 pending，避免其他 worker 抢走同一项
+      item.state = "retry-wait";
+      await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * item.retries));
+      if (task.status === "running") item.state = "pending";
+    } else {
+      item.state = "failed";
+      task.failed++;
+    }
+  } finally {
+    if (activeDownloads > 0) activeDownloads--;
+    saveTask();
+  }
+}
+
 async function runDownloadLoop() {
   if (task.status !== "running") return;
   const c = cfg.readConfig();
-  const concurrency = c.concurrency || 3;
+  const concurrency = Math.max(1, Math.min(8, parseInt(c.concurrency, 10) || 3));
 
-  while (task.status === "running" && task.idx < task.items.length) {
-    while (activeDownloads >= concurrency && task.status === "running") {
-      await new Promise((r) => setTimeout(r, 500));
-    }
-    if (task.status !== "running") break;
-
-    const item = task.items[task.idx];
-    task.idx++;
-    if (item.state !== "pending") continue;
-    activeDownloads++;
-
-    try {
-      item.state = "downloading";
-      saveTask();
-
-      const existing = findExistingVideoFile(c.downloadPath, item.id);
-      if (existing) {
-        item.file = path.basename(existing);
-        item.savePath = existing;
-        if (!item.title || item.title === item.id) item.title = item.file.replace(/\.(mp4|webm|mov|mkv)$/i, "");
-        markSkipped(item, "文件已存在，跳过");
-        thumbCache.ensureThumb(item.id, { filePath: existing }).catch(() => null);
-      } else if (c.downloadBackend === "aria2" && await aria2AlreadyHas(item.id, item.file)) {
-        markSkipped(item, "Aria2 已有此文件，跳过");
-      } else if (c.downloadBackend === "aria2") {
-        // aria2：也先取 fresh 链接（下载链接会到期，不能复用旧 URL）
-        const info = await api.getVideoInfo(item.id);
-        applyParsedName(item, info, c);
-        item.url = info.downloadUrl;
-        if (info.file && info.file.size) item.total = info.file.size;
-        if (!item.url) throw new Error("无法获取下载链接: " + (info.error || "未知"));
-        await api.autoLikeFollow(info);
-        if (await aria2AlreadyHas(item.id, item.file)) {
-          markSkipped(item, "Aria2 已有此文件，跳过");
-        } else {
-          const toggles = cfg.normalizeDownloadToggles(c.downloadToggles);
-          if (toggles.video) {
-            await aria2Add(item);
-          } else {
-            item.error = "已跳过视频（设置未勾选）";
-          }
-          const packed = videoIndex.fromDownload(info, item);
-          if (packed && toggles.json) {
-            try {
-              await aria2AddIndexJson(videoIndex.sidecarFileName(item.file), packed.id, packed.entry);
-            } catch (e) {
-              console.error("[downloader] 索引 JSON 推送 aria2 失败:", e && e.message || e);
-            }
-          }
-          // aria2 异步下载，无法（简单）追踪进度 → 直接标记为已提交
-          item.state = "submitted";
-          item.progress = 100;
-          if (toggles.video) item.error = "已提交至 Aria2（进度请查看 Aria2 WebUI）";
-          task.completed++;
-          if (toggles.json) await videoIndex.recordDownload(c.downloadPath, info, item, { writeSidecar: false });
-        }
-      } else {
-        // direct：每次下载都重新解析直链 —— 下载链接会到期，必须用 fresh 链接
-        const info = await api.getVideoInfo(item.id);
-        applyParsedName(item, info, c);
-        item.url = info.downloadUrl;
-        if (info.file && info.file.size) item.total = info.file.size;
-        if (!item.url) throw new Error("无法获取下载链接: " + (info.error || "未知"));
-        await api.autoLikeFollow(info);
-        const authorDir = c.useAuthorSubdir ? sanitizeFileName(info.author || item.author || "unknown") : "";
-        item.savePath = authorDir ? safeJoin(c.downloadPath, path.join(authorDir, item.file)) : safeJoin(c.downloadPath, item.file);
-        // 确保目录存在
-        fs.mkdirSync(path.dirname(item.savePath), { recursive: true });
-        const toggles = cfg.normalizeDownloadToggles(c.downloadToggles);
-        if (!toggles.video) {
-          item.state = "done";
-          item.progress = 100;
-          item.error = "已跳过视频（设置未勾选）";
-          task.completed++;
-          if (toggles.json) await videoIndex.recordDownload(c.downloadPath, info, item, { writeSidecar: true, sidecarOnly: true });
-        } else if (localFileExists(item.savePath)) {
-          markSkipped(item, "文件已存在，跳过");
-        } else {
-          const result = await downloadToFile(item, (p) => {
-            item.doneBytes = p.done;
-            item.progress = item.total ? Math.min(99, Math.round((p.done / item.total) * 100)) : 0;
-            saveTask();
-          });
-          if (result === "done") {
-            item.state = "done";
-            item.progress = 100;
-            item.doneBytes = item.total || 0;
-            task.completed++;
-            if (toggles.json) await videoIndex.recordDownload(c.downloadPath, info, item);
-            await thumbCache.ensureFromInfo(item.id, info, item.savePath);
-          }
-        }
+  const takeNext = () => {
+    if (task.status !== "running") return null;
+    for (const it of task.items) {
+      if (it.state === "pending") {
+        it.state = "downloading";
+        return it;
       }
-    } catch (e) {
-      item.error = String(e.message || e);
-      item.retries = (item.retries || 0) + 1;
-      if (item.retries <= MAX_RETRY && task.status === "running") {
-        item.state = "pending"; // 放回队尾？简单起见：延迟重试（同位置）
-        task.idx = Math.max(0, task.idx - 1);
-        await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * item.retries));
-      } else {
-        item.state = "failed";
-        task.failed++;
-      }
-    } finally {
-      activeDownloads--;
-      saveTask();
     }
+    return null;
+  };
+
+  const worker = async () => {
+    while (task.status === "running") {
+      const item = takeNext();
+      if (!item) return;
+      activeDownloads++;
+      await processOneItem(item);
+    }
+  };
+
+  const n = Math.max(1, Math.min(concurrency, (task.items || []).filter((it) => it.state === "pending" || it.state === "downloading").length || concurrency));
+  const workers = [];
+  for (let i = 0; i < n; i++) workers.push(worker());
+  await Promise.all(workers);
+
+  // 重试把失败项改回 pending 时，本轮 worker 可能已退出；还有 pending 就再开一轮
+  while (task.status === "running" && (task.items || []).some((it) => it.state === "pending")) {
+    const again = [];
+    const left = (task.items || []).filter((it) => it.state === "pending").length;
+    const n2 = Math.max(1, Math.min(concurrency, left));
+    for (let i = 0; i < n2; i++) again.push(worker());
+    await Promise.all(again);
   }
 
   if (task.status === "running") {
