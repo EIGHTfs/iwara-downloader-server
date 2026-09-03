@@ -134,7 +134,8 @@ function applyParsedName(item, info, c) {
   if (info.quality) item.quality = info.quality;
   const fid = thumbCache.fileIdOf(info);
   if (fid) item.fileId = fid;
-  thumbCache.ensureFromInfo(item.id, info, item.savePath).catch(() => null);
+  // 下载解析到官方 fileId 立刻存封面（此时 savePath 可能还没定，不走抽帧）
+  thumbCache.saveOfficialThumb(item.id, fid, info.thumbnail).catch(() => null);
   item.file = applyFileNameTemplate((c && c.fileNameTemplate) || "", {
     title: info.title || item.title,
     alias: info.alias || "",

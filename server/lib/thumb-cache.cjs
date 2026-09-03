@@ -145,7 +145,65 @@ async function fetchRemote(id, fileId, n) {
   const img = await api.fetchThumbnail(fid, n);
   if (!img || !img.buf || !img.buf.length) return null;
   writeThumb(vid, img.buf);
-  return { buf: img.buf, contentType: img.contentType || "image/jpeg" };
+  return { buf: img.buf, contentType: img.contentType || "image/jpeg", mtimeMs: Date.now(), size: img.buf.length };
+}
+
+// 2026-09-04：搜索/下载时把官方封面落到 thumbs/<id>.jpg。
+// 用户原话：「修改代码实现搜索时，下载时从官方获取封面并按本地规范保存优先于本地生成，视频播放从本地获取，包括这从网上获取保存到本地的」
+// 【思路】规范=server/thumbs/<id>.jpg。已有文件跳过（低负载）。队列并发 2。
+const officialQueue = [];
+const officialQueued = new Set();
+let officialActive = 0;
+const OFFICIAL_CONC = 2;
+
+function saveOfficialThumb(id, fileId, n) {
+  const vid = safeId(id);
+  const fid = String(fileId || "").trim();
+  if (!vid || !fid) return Promise.resolve(null);
+  if (hasThumb(vid)) return Promise.resolve(readThumb(vid));
+  if (inflight.has(vid)) return inflight.get(vid);
+  const job = fetchRemote(vid, fid, n).catch((e) => {
+    console.error("[thumb] official", vid, e && e.message || e);
+    return null;
+  }).finally(() => inflight.delete(vid));
+  inflight.set(vid, job);
+  return job;
+}
+
+function pumpOfficialQueue() {
+  while (officialActive < OFFICIAL_CONC && officialQueue.length) {
+    const it = officialQueue.shift();
+    officialQueued.delete(it.id);
+    officialActive++;
+    saveOfficialThumb(it.id, it.fileId, it.n).finally(() => {
+      officialActive--;
+      pumpOfficialQueue();
+    });
+  }
+}
+
+function enqueueOfficialThumb(id, fileId, n) {
+  const vid = safeId(id);
+  const fid = String(fileId || "").trim();
+  if (!vid || !fid) return;
+  if (hasThumb(vid) || inflight.has(vid) || officialQueued.has(vid)) return;
+  officialQueued.add(vid);
+  officialQueue.push({ id: vid, fileId: fid, n: n });
+  pumpOfficialQueue();
+}
+
+function prefetchOfficialFromList(list) {
+  const arr = Array.isArray(list) ? list : [];
+  let n = 0;
+  for (const v of arr) {
+    if (!v) continue;
+    const vid = safeId(v.id || v.modId);
+    if (!vid || hasThumb(vid)) continue;
+    const fid = (v.file && v.file.id) || v.fileId || "";
+    enqueueOfficialThumb(vid, fid, v.thumbnail);
+    n++;
+    if (n >= 40) break; // 低负载：导入一次最多入队 40 张
+  }
 }
 
 function ensureThumb(id, opts) {
@@ -157,11 +215,12 @@ function ensureThumb(id, opts) {
   const job = (async () => {
     const o = opts || {};
     const out = thumbPath(vid);
-    if (o.filePath && await extractFrame(o.filePath, out)) return readThumb(vid);
+    // 【原代码】先 ffmpeg 抽帧，失败再官方。【改为】官方优先于本地生成。
     if (o.fileId) {
       const remote = await fetchRemote(vid, o.fileId, o.n);
       if (remote) return remote;
     }
+    if (o.filePath && await extractFrame(o.filePath, out)) return readThumb(vid);
     return null;
   })().catch((e) => {
     console.error("[thumb] ensure", vid, e && e.message || e);
@@ -185,13 +244,15 @@ function ensureFromInfo(id, info, filePath) {
   if (inflight.has(vid)) return inflight.get(vid);
   const job = (async () => {
     const out = thumbPath(vid);
-    if (await extractFrame(fp, out)) return readThumb(vid);
-    // 本地抽帧失败，尝试从 Iwara CDN 下载
+    // 2026-09-04：官方封面优先于 ffmpeg 抽帧。
+    // 【原代码】先 extractFrame，失败再 fetchRemote。
+    // 【改为】用户原话「下载时从官方获取封面并按本地规范保存优先于本地生成」
     const fid = fileIdOf(info);
     if (fid) {
       const remote = await fetchRemote(vid, fid, thumbIndexOf(info));
       if (remote) return remote;
     }
+    if (await extractFrame(fp, out)) return readThumb(vid);
     return null;
   })().catch((e) => {
     console.error("[thumb] ensureFromInfo", vid, e && e.message || e);
@@ -251,9 +312,11 @@ function warmupAll(root) {
       await Promise.all(batch.map(async (vid) => {
         const entry = videos[vid] || {};
         const found = videoIndex.findPlayable(r, vid);
+        // warmup 也官方优先，缺官方再抽本地视频帧
         return ensureThumb(vid, {
-          filePath: found && found.file || "",
-          fileId: entry.fileId || (found && found.entry && found.entry.fileId) || ""
+          fileId: entry.fileId || (found && found.entry && found.entry.fileId) || "",
+          n: entry.thumbnail,
+          filePath: found && found.file || ""
         });
       }));
     }
@@ -276,5 +339,6 @@ function warmupReady() { return warmupPromise || Promise.resolve({ total: 0, cac
 module.exports = {
   THUMB_DIR, safeId, thumbPath, hasThumb, readThumb, writeThumb,
   ensureThumb, ensureFromInfo, fileIdOf, thumbIndexOf, localSrc,
-  extractFrame, listCached, warmupAll, warmupReady
+  extractFrame, listCached, warmupAll, warmupReady,
+  saveOfficialThumb, enqueueOfficialThumb, prefetchOfficialFromList
 };

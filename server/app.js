@@ -305,19 +305,12 @@ const server = http.createServer(async (req, res) => {
       const id = String(parsed.query.id || "").trim();
       const fileId = String(parsed.query.file || "").trim();
       const n = String(parsed.query.n || "0");
-      // 2026-09-04：搜索列表封面走官方。
-      // 【原代码】先 readThumb(id)，有本地抽帧就直接返回，file 参数被忽略。
-      // 【改为】用户原话「搜索列表有些加载不出正确封面」「搜搜列表封面本来就走的官方」
-      // 【思路】thumbSrc 带了 id+file，但本地 ffmpeg 帧和 i.iwara.tv 官方封面不是同一张。
-      //   有 file 时先 fetchThumbnail；不 writeThumb 覆盖播放页用的本地抽帧。官方失败再退回本地。
-      let img = null;
-      if (fileId) {
-        try {
-          const remote = await api.fetchThumbnail(fileId, n);
-          if (remote && remote.buf) img = remote;
-        } catch (_) {}
-      }
-      if (!img && id) img = thumbCache.readThumb(id);
+      // 2026-09-04：列表/播放只读本地 thumbs/<id>.jpg。
+      // 【原代码】请求路径带 file 就现场拉 i.iwara.tv，列表一次刷几十张会打满官方且有的超时变空。
+      // 【改为】用户原话「搜索时，下载时从官方获取封面并按本地规范保存」「视频播放从本地获取，包括这从网上获取保存到本地的」
+      // 【思路】官方拉取放到搜索/下载后台队列；这里只 readThumb。缺图时若带 file 则入队，这次 404，下次刷新有图。
+      let img = id ? thumbCache.readThumb(id) : null;
+      if (!img && id && fileId) thumbCache.enqueueOfficialThumb(id, fileId, n);
       if (!img || !img.buf) {
         // 2026-09-04：缺封面不要回 JSON。用户原话「前端正常刷新封面了，刷新又没了」。
         // 【原代码】sendJson(res, 404, { ok: false, error: "无封面" })

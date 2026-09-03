@@ -8,6 +8,7 @@
 const fs = require("fs");
 const path = require("path");
 const api = require("./iwara-api");
+const thumbCache = require("./thumb-cache.cjs");
 
 const DATA_DIR = process.env.GBMD_DATA_DIR || path.join(__dirname, "..");
 const QUERY_FILE = path.join(DATA_DIR, "search_task.json");
@@ -186,6 +187,10 @@ async function doQueryLoop() {
         if (seen.has(v.id)) continue;
         seen.add(v.id);
         queryTask.results.push(v);
+        // 2026-09-04：搜索时拉官方封面落到 thumbs/<id>.jpg。
+        // 用户原话：「搜索时，下载时从官方获取封面并按本地规范保存」
+        // 【思路】入队即 enqueue，不阻塞翻页；列表只读本地，封面到了刷新即可显示。
+        thumbCache.enqueueOfficialThumb(v.id, v.file && v.file.id, v.thumbnail);
         if (queryTask.results.length >= MAX_RESULTS) break;
       }
 
@@ -259,6 +264,7 @@ function importCache(records) {
   cache.queryTime = Date.now();
   cache.importedAt = Date.now();
   saveCache(cache);
+  thumbCache.prefetchOfficialFromList(existing);
   return { ok: true, added, replaced, total: existing.length };
 }
 
@@ -283,6 +289,7 @@ function saveRecords(results) {
   cache.results = norm;
   cache.queryTime = Date.now();
   saveCache(cache);
+  thumbCache.prefetchOfficialFromList(norm);
   return { ok: true, total: norm.length };
 }
 

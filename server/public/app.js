@@ -739,17 +739,17 @@ function normalizeUserRow(u) {
 }
 
 function thumbSrc(v) {
+  // 2026-09-04：搜索列表只读本地封面。
+  // 【原代码】拼 id+file 让 /api/thumb 现场拉官方，列表不能一次加载完。
+  // 【改为】用户原话「现在列表也是，不能全部加载封面」+「视频播放从本地获取」
+  // 【思路】URL 只用 id；file 作 query 仅提示服务端缺图时入队，不阻塞当前 <img>。
   const id = videoId(v);
+  if (!id) return "";
   const fileId = v && v.file && v.file.id;
   const n = Number.isFinite(Number(v.thumbnail)) ? Number(v.thumbnail) : 0;
-  if (id) {
-    let u = "/api/thumb?id=" + encodeURIComponent(id);
-    if (fileId) u += "&file=" + encodeURIComponent(fileId) + "&n=" + n;
-    return u;
-  }
-  if (fileId) return "/api/thumb?file=" + encodeURIComponent(fileId) + "&n=" + n;
-  if (v && typeof v.thumbnailUrl === "string" && v.thumbnailUrl.indexOf("/api/thumb") === 0) return v.thumbnailUrl;
-  return "";
+  let u = "/api/thumb?id=" + encodeURIComponent(id);
+  if (fileId) u += "&file=" + encodeURIComponent(fileId) + "&n=" + n;
+  return u;
 }
 
 function resultItemHtml(v) {
@@ -773,7 +773,7 @@ function resultItemHtml(v) {
   const href = "https://www.iwara.tv/video/" + encodeURIComponent(id);
   const src = thumbSrc(v);
   const img = src
-    ? `<img class="row-thumb" src="${esc(src)}" alt="" loading="lazy" onerror="this.style.display='none'" onload="this.style.display=''">`
+    ? `<img class="row-thumb" src="${esc(src)}" alt="" loading="lazy" onload="this.style.display=''" onerror="var n=Number(this.dataset.try||0)+1;this.dataset.try=n;if(n<5){var el=this;setTimeout(function(){el.src=el.getAttribute('data-base')+'&r='+Date.now();},600*n);}else{this.style.display='none';}" data-base="${esc(src)}">`
     : `<div class="row-thumb" style="background:var(--card2)"></div>`;
   return `<div class="result-item">
     <input type="checkbox" data-id="${esc(id)}" onclick="event.stopPropagation()">
