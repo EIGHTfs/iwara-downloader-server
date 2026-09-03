@@ -991,7 +991,9 @@ function makeTaskItem(it, c, root) {
     doneBytes: 0,
     total: it.size || 0,
     retries: 0,
-    error: ""
+    error: "",
+    fileId: (it.file && it.file.id) || it.fileId || "",
+    thumbnail: it.thumbnail
   };
 }
 
@@ -1021,6 +1023,16 @@ async function startDownloadTask(items) {
     }
     task.items.push(makeTaskItem(it, c, root));
     added++;
+  }
+  // 2026-09-04：aria2 入队后任务列表也要有封面。
+  // 【原代码】要等 worker getVideoInfo → applyParsedName 才 saveOfficialThumb；列表先 /api/thumb 404 把 <img> display:none。
+  // 【改为】用户原话「推送aria2下载模式，任务列表没有封面」
+  // 【思路】入队立刻按 id 拉官方封面落到 thumbs/<id>.jpg（有 fileId 更好，没有就 getThumbMeta）。并发 2。
+  for (const it of items) {
+    const id = String(it.id || "").trim();
+    if (!id) continue;
+    const fid = (it.file && it.file.id) || it.fileId || "";
+    thumbCache.saveOfficialThumb(id, fid, it.thumbnail).catch(() => null);
   }
 
   task.backend = c.downloadBackend;

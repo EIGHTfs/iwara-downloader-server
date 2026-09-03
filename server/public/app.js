@@ -379,16 +379,33 @@ function renderTask(task) {
     const row = ensureTaskRow(listEl, it);
     row.className = "item " + cls;
     let thumb = row.querySelector(".row-thumb");
+    const thumbUrl = "/api/thumb?id=" + encodeURIComponent(it.id);
+    function bindThumbRetry(img) {
+      img.onerror = function () {
+        var n = Number(this.dataset.try || 0) + 1;
+        this.dataset.try = String(n);
+        if (n < 8) {
+          var el = this;
+          setTimeout(function () { el.style.display = ""; el.src = thumbUrl + "&r=" + Date.now(); }, 400 * n);
+        } else {
+          this.style.display = "none";
+        }
+      };
+      img.onload = function () { this.style.display = ""; this.dataset.try = "0"; };
+    }
     if (thumb && thumb.tagName !== "IMG") {
       const img = document.createElement("img");
       img.className = "row-thumb";
       img.alt = "";
       img.loading = "lazy";
-      img.onerror = function () { this.style.display = "none"; };
-      img.onload = function () { this.style.display = ""; };
-      img.src = "/api/thumb?id=" + encodeURIComponent(it.id);
+      bindThumbRetry(img);
+      img.src = thumbUrl;
       row.replaceChild(img, thumb);
       thumb = img;
+    } else if (thumb && thumb.tagName === "IMG" && thumb.style.display === "none") {
+      bindThumbRetry(thumb);
+      thumb.style.display = "";
+      thumb.src = thumbUrl + "&r=" + Date.now();
     }
     const iconEl = row.querySelector(".icon");
     if (iconEl) iconEl.textContent = icon;
@@ -615,7 +632,7 @@ function bindSearch() {
     const payload = ids.map((id) => {
       const v = items.find((x) => videoId(x) === id) || { id };
       if (v && v._kind === "user") return null;
-      return { id, title: v.title || v.name || "", author: videoAuthor(v) };
+      return { id, title: v.title || v.name || "", author: videoAuthor(v), fileId: v.file && v.file.id, thumbnail: v.thumbnail, file: v.file };
     }).filter(Boolean);
     if (!payload.length) { showFeedback("作者结果不能直接下载，请改搜视频", "err"); return; }
     try {
