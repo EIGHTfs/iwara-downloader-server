@@ -59,8 +59,12 @@ try {
   flex-shrink: 0;
 }
 .player-meta h1 { margin: 0 0 8px; font-size: 18px; word-break: break-all; }
-.player-author { color: var(--muted); margin-bottom: 8px; font-size: 13px; }
+.player-author { color: var(--muted); margin-bottom: 8px; font-size: 13px; display: flex; align-items: center; gap: 8px; }
 .player-author a { color: var(--primary); text-decoration: none; }
+.player-author .author-avatar {
+  width: 28px; height: 28px; border-radius: 50%; object-fit: cover; flex-shrink: 0;
+  background: var(--card2); border: 1px solid var(--border);
+}
 .player-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
 .player-tags span {
   background: var(--card2); border: 1px solid var(--border);
@@ -464,6 +468,20 @@ try {
   }
 
   // ─── 加载视频（play-info + 更新播放器） ───
+
+    function renderAuthor(j) {
+      j = j || {};
+      var name = esc(j.name || j.username || "");
+      var link = j.username
+        ? '<a href="https://www.iwara.tv/profile/' + encodeURIComponent(j.username) + '" target="_blank" rel="noopener">' + name + '</a>'
+        : name;
+      var img = "";
+      if (j.avatar && /^\/avatar\/[0-9a-f-]+\/[0-9a-f-]+\.jpg$/i.test(j.avatar)) {
+        img = '<img class="author-avatar" src="' + esc(j.avatar) + '" alt="" width="28" height="28" onerror="this.style.display=\'none\'">';
+      }
+      $("#author").innerHTML = img + link;
+    }
+
   function loadVideo(newId) {
     if (!newId || loadingVideo) return;
     loadingVideo = true;
@@ -490,9 +508,7 @@ try {
         if (!j.ok) throw new Error(j.error || "读取失败");
         document.title = (j.title || id) + " · 本地播放";
         $("#title").textContent = j.title || id;
-        $("#author").innerHTML = j.username
-          ? '<a href="https://www.iwara.tv/profile/' + encodeURIComponent(j.username) + '" target="_blank" rel="noopener">' + esc(j.name || j.username) + '</a>'
-          : esc(j.name || "");
+        renderAuthor(j);
         var tags = Array.isArray(j.tags) ? j.tags : [];
         $("#tags").innerHTML = tags.map(function (t) { return "<span>" + esc(t.id || t) + "</span>"; }).join("");
         var extra = [];
@@ -532,9 +548,7 @@ try {
       if (!j.ok) throw new Error(j.error || "读取失败");
       document.title = (j.title || id) + " · 本地播放";
       $("#title").textContent = j.title || id;
-      $("#author").innerHTML = j.username
-        ? '<a href="https://www.iwara.tv/profile/' + encodeURIComponent(j.username) + '" target="_blank" rel="noopener">' + esc(j.name || j.username) + '</a>'
-        : esc(j.name || "");
+      renderAuthor(j);
       var tags = Array.isArray(j.tags) ? j.tags : [];
       $("#tags").innerHTML = tags.map(function (t) { return "<span>" + esc(t.id || t) + "</span>"; }).join("");
       var extra = [];

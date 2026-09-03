@@ -78,6 +78,16 @@ function entryOf(raw, username) {
   };
 }
 
+function readEntry(username) {
+  const u = safeUser(username);
+  if (!u) return null;
+  const file = profilePath(u);
+  if (file && fs.existsSync(file)) return entryOf(readJson(file), u);
+  const cat = readJson(CATALOG);
+  if (cat && typeof cat === "object" && cat[u]) return entryOf(cat[u], u);
+  return null;
+}
+
 function patchCatalog(username, entry) {
   if (!username || !entry) return;
   const map = (readJson(CATALOG) && typeof readJson(CATALOG) === "object") ? readJson(CATALOG) : {};
@@ -248,5 +258,6 @@ module.exports = {
   upsertFromInfo,
   upsertFromIndexEntry,
   backfillMissing,
-  rebuildCatalog
+  rebuildCatalog,
+  readEntry
 };

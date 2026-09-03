@@ -24,6 +24,7 @@ const videoIndex = require("./lib/video-index");
 const renameFiles = require("./lib/rename-files");
 const deviceCheck = require("./lib/device-check");
 const thumbCache = require("./lib/thumb-cache.cjs");
+const profileIndex = require("./lib/profile-index");
 
 const PUBLIC_DIR = path.join(__dirname, "public");
 const MIME = {
@@ -32,6 +33,9 @@ const MIME = {
   ".css": "text/css; charset=utf-8",
   ".json": "application/json; charset=utf-8",
   ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
   ".svg": "image/svg+xml",
   ".ico": "image/x-icon",
   ".mp4": "video/mp4",
@@ -438,6 +442,12 @@ const server = http.createServer(async (req, res) => {
         partial,
         name: e.name || hint.author || "",
         username: e.username || "",
+        avatar: (function () {
+          // 用户原话：「别找错路径了」——头像只认项目根 avatar/<uuid>/<uuid>.jpg，不是下载目录、不是 thumbs。
+          const prof = profileIndex.readEntry(e.username || "");
+          const rel = (prof && prof.avatar) || "";
+          return rel && profileIndex.avatarExists(rel) ? rel : "";
+        })(),
         title: e.title || hint.title || hint.file || id,
         fileId: e.fileId || "",
         duration: e.duration || 0,
@@ -816,6 +826,25 @@ const server = http.createServer(async (req, res) => {
       const dryRun = body && body.dryRun === false ? false : true;
       const forceFrom = body && body.forceFrom ? String(body.forceFrom) : "";
       return sendJson(res, 200, renameFiles.executePlan(dryRun, { forceFrom }));
+    }
+
+    // 用户原话：「视频播放页可以把作者头像加在作者名前了，别找错路径了」
+    // 磁盘：<项目>/avatar/<uuid>/<uuid>.jpg  → URL /avatar/<uuid>/<uuid>.jpg
+    if ((method === "GET" || method === "HEAD") && pathname.indexOf("/avatar/") === 0) {
+      const rel = pathname.slice("/avatar/".length);
+      const m = rel.match(/^([0-9a-f-]{36})\/\1\.jpg$/i);
+      if (!m) return sendJson(res, 404, { ok: false, error: "头像不存在" });
+      const file = profileIndex.avatarFile(m[1]);
+      if (!file || !fs.existsSync(file)) { res.writeHead(404); res.end("Not Found"); return; }
+      const st = fs.statSync(file);
+      res.writeHead(200, {
+        "Content-Type": "image/jpeg",
+        "Content-Length": st.size,
+        "Cache-Control": "public, max-age=86400"
+      });
+      if (method === "HEAD") { res.end(); return; }
+      fs.createReadStream(file).pipe(res);
+      return;
     }
 
     // ---- 播放短链 /{id} ----
