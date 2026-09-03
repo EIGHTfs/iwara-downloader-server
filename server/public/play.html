@@ -222,9 +222,16 @@ try {
       miniProgressBar: true,
       playsInline: true,
       mutex: true,
-      moreVideoAttr: { crossOrigin: "use-credentials" }
+      moreVideoAttr: { playsInline: true }
     });
     window.__art = art;
+    // 同域 /api/play 走 session cookie；crossOrigin 会变成 CORS 请求，服务端无 ACAO 头就播不了
+    try {
+      if (art.video) {
+        art.video.removeAttribute("crossorigin");
+        art.video.crossOrigin = null;
+      }
+    } catch (_) {}
     art.on("error", function (err) {
       $("#err").textContent = (err && err.message) || "播放失败";
     });
@@ -313,8 +320,15 @@ try {
   }
 
   fetch("/api/play-info?id=" + encodeURIComponent(id), { credentials: "same-origin" })
-    .then(function (r) { return r.json(); })
+    .then(function (r) {
+      if (r.status === 401) {
+        location.href = "/login.html?next=" + encodeURIComponent(location.pathname + location.search);
+        return Promise.reject(new Error("未登录"));
+      }
+      return r.json();
+    })
     .then(function (j) {
+      if (!j) return;
       if (!j.ok) throw new Error(j.error || "读取失败");
       document.title = (j.title || id) + " · 本地播放";
       $("#title").textContent = j.title || id;

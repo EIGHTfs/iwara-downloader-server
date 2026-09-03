@@ -200,6 +200,7 @@ aria2 进程自己做 DNS。若本机 DNS 污染 iwara 子域，需在 **aria2 �
 
 | 版本 | 内容 |
 |---|---|
+| 1.0.7 | **播放页**：去掉 ArtPlayer `crossOrigin`（同域无 CORS 头会导致 `<video>` 播不了）；未登录跳登录并回到当前 `play.html?id=` |
 | 1.0.6 | **本地播放**：吸收 ArtPlayer MIT 静态文件（非 npm）；`.part` / 未下完文件按已写入字节 Range 播；HEAD 与 GET 同头；`boot.cjs` 零依赖启动（禁止 package.json） |
 | 1.0.5 | 正式进程改到下载盘同机；单脚本启停；跳过已下载不看索引 |
 

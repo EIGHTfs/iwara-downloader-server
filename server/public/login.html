@@ -32,7 +32,8 @@ async function login() {
     });
     const j = await r.json();
     if (!j.ok) throw new Error(j.error || "登录失败");
-    location.href = "/";
+    const next = new URLSearchParams(location.search).get("next") || "/";
+    location.href = next.charAt(0) === "/" && next.indexOf("//") < 0 ? next : "/";
   } catch (e) {
     st.textContent = e.message;
     st.className = "status err";
