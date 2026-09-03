@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Iwara 下载助手（Cookie + 一键发送到服务器）
 // @namespace    iwara-cred
-// @version      7.6.1
-// @description  SPA 换页不重载；服务器地址 GM+localStorage 双写，打开必回填。
+// @version      7.7.0
+// @description  SPA 换页不重载；视频链接右键/长按发送到服务器。
 // @author       EIGHTfs
 // @match        https://www.iwara.tv/*
 // @match        https://iwara.tv/*
@@ -40,7 +40,7 @@
 (function () {
     "use strict";
 
-    const VER = "7.6.1";
+    const VER = "7.7.0";
     const ACCOUNT_TTL_MS = 5 * 60 * 1000; // 换页不重复打 /api/account-check
     const SRV_SESSION_KEY = "iwcred_server_session";
     const IWARA_ICON = "data:image/png;base64,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";
@@ -481,6 +481,12 @@
 #iwcred-srv-status.ok{color:#1a9d4b}
 #iwcred-srv-status.err{color:#d0392f}
 #iwcred-srv-status.info{color:#2f6fed}
+#iwcred-ctx{position:fixed;z-index:2147483647;min-width:188px;background:#fff;border:1px solid #c9cfd8;
+  border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.2);overflow:hidden;font:14px/1.4 system-ui,-apple-system,"Microsoft YaHei",sans-serif}
+#iwcred-ctx button{display:block;width:100%;text-align:left;padding:12px 14px;border:none;background:#fff;
+  color:#222;font-size:15px;cursor:pointer}
+#iwcred-ctx button:active,#iwcred-ctx button:hover{background:#eef4ff}
+a[href*="/video/"],a[href*="/v/"]{-webkit-touch-callout:none}
 `;
         (document.head || document.documentElement).appendChild(style);
     }
@@ -820,17 +826,20 @@
         }
     }
 
-    async function srvSendFlow() {
+    async function srvSendFlow(explicitUrl) {
         if (!ensureUi()) return;
-        const videoUrl = currentVideoUrl();
+        const videoUrl = (typeof explicitUrl === "string" && explicitUrl) ? explicitUrl : currentVideoUrl();
         if (!videoUrl) {
             srvSetStatus("当前不是视频页（未匹配 /video/xxx），请打开视频页再发", "err");
+            showToast("请在视频链接上右键 / 长按");
             return;
         }
         const cur = currentServer();
         let base = cur ? cur.url : "";
         if (!base) {
+            showPanel();
             srvSetStatus("没有服务器地址：请先点「添加」写入服务端", "err");
+            showToast("请先在面板添加服务器");
             return;
         }
         const sendBtn = panelEl.querySelector("#iwcred-send");
@@ -977,9 +986,100 @@
         lastHref = location.href;
     }
 
+
+    function videoUrlFromNode(node) {
+        let el = node;
+        if (el && el.nodeType === 3) el = el.parentElement;
+        while (el && el !== document.documentElement) {
+            if (el.tagName === "A") {
+                const href = el.getAttribute("href") || el.href || "";
+                const m = String(href).match(/\/(?:video|v)\/([\w-]+)/i);
+                if (m) return location.origin + "/video/" + m[1];
+            }
+            el = el.parentElement;
+        }
+        return "";
+    }
+
+    function hideCtxMenu() {
+        const m = document.getElementById("iwcred-ctx");
+        if (m && m.parentNode) m.parentNode.removeChild(m);
+    }
+
+    function showCtxMenu(x, y, videoUrl) {
+        hideCtxMenu();
+        const m = document.createElement("div");
+        m.id = "iwcred-ctx";
+        const b = document.createElement("button");
+        b.type = "button";
+        b.textContent = "📤 发送到服务器";
+        b.addEventListener("click", (ev) => {
+            ev.preventDefault();
+            ev.stopPropagation();
+            hideCtxMenu();
+            srvSendFlow(videoUrl);
+        });
+        m.appendChild(b);
+        document.documentElement.appendChild(m);
+        const pad = 8;
+        const w = m.offsetWidth || 188;
+        const h = m.offsetHeight || 44;
+        let left = x;
+        let top = y;
+        if (left + w > window.innerWidth - pad) left = window.innerWidth - w - pad;
+        if (top + h > window.innerHeight - pad) top = window.innerHeight - h - pad;
+        if (left < pad) left = pad;
+        if (top < pad) top = pad;
+        m.style.left = left + "px";
+        m.style.top = top + "px";
+    }
+
+    function bindContextSend() {
+        if (window.__iwcredCtxBound) return;
+        window.__iwcredCtxBound = true;
+        document.addEventListener("contextmenu", (ev) => {
+            const url = videoUrlFromNode(ev.target);
+            if (!url) return;
+            ev.preventDefault();
+            ev.stopPropagation();
+            showCtxMenu(ev.clientX, ev.clientY, url);
+        }, true);
+
+        let pressTimer = 0, sx = 0, sy = 0, pressUrl = "";
+        const cancelPress = () => {
+            if (pressTimer) { clearTimeout(pressTimer); pressTimer = 0; }
+        };
+        document.addEventListener("touchstart", (ev) => {
+            if (!ev.touches || ev.touches.length !== 1) return;
+            const url = videoUrlFromNode(ev.target);
+            if (!url) return;
+            const t = ev.touches[0];
+            sx = t.clientX; sy = t.clientY; pressUrl = url;
+            cancelPress();
+            pressTimer = setTimeout(() => {
+                pressTimer = 0;
+                showCtxMenu(sx, sy, pressUrl);
+            }, 480);
+        }, { capture: true, passive: true });
+        document.addEventListener("touchmove", (ev) => {
+            if (!pressTimer || !ev.touches || !ev.touches[0]) return;
+            const t = ev.touches[0];
+            if (Math.abs(t.clientX - sx) > 12 || Math.abs(t.clientY - sy) > 12) cancelPress();
+        }, { capture: true, passive: true });
+        document.addEventListener("touchend", cancelPress, { capture: true, passive: true });
+        document.addEventListener("touchcancel", cancelPress, { capture: true, passive: true });
+        document.addEventListener("click", (ev) => {
+            const m = document.getElementById("iwcred-ctx");
+            if (!m) return;
+            if (m.contains(ev.target)) return;
+            hideCtxMenu();
+        }, true);
+    }
+
     function boot() {
         injectStyle();
         ensureUi();
+        bindContextSend();
         hookSpa();
         log("已加载 v" + VER + "（SPA 常驻，换页不重载）");
         setInterval(() => { ensureUi(); }, 2500);
