@@ -27,7 +27,9 @@ const jsonDir = require("./json-dir");
 const CATALOG_NAME = "iwara-index.json";
 const DATA_DIR = jsonDir.SERVER_DIR;
 const JSON_DIR = jsonDir.JSON_DIR;
-const SIDECAR_CACHE = path.join(JSON_DIR, "index-sidecars"); //userdata-manifest.json dir json/index-sidecars .json aria2 可拉取的索引 sidecar
+// 用户原话：「索引放json/index/  包括总表和每个视频json」
+const INDEX_DIR = path.join(JSON_DIR, "index"); //userdata-manifest.json dir json/index .json 本机视频索引（总表 iwara-index.json + 每条 <id>.json）
+const SIDECAR_CACHE = INDEX_DIR;
 
 function sidecarKey(id) {
   const cfg = require("../config").readConfig();
@@ -35,19 +37,45 @@ function sidecarKey(id) {
   return crypto.createHmac("sha256", String(secret)).update(String(id)).digest("hex").slice(0, 16);
 }
 
-function migrateSidecarCache() {
-  const legacy = path.join(DATA_DIR, "index-sidecars");
-  try {
-    if (fs.existsSync(SIDECAR_CACHE)) return;
-    if (!fs.existsSync(legacy) || !fs.statSync(legacy).isDirectory()) return;
-    fs.mkdirSync(JSON_DIR, { recursive: true });
-    fs.renameSync(legacy, SIDECAR_CACHE);
-  } catch (_) {}
+function ensureIndexDir() {
+  fs.mkdirSync(INDEX_DIR, { recursive: true });
+}
+
+function moveFileIfNeeded(src, dest) {
+  if (!src || src === dest || !fs.existsSync(src)) return;
+  if (fs.existsSync(dest)) {
+    try { fs.unlinkSync(src); } catch (_) {}
+    return;
+  }
+  try { fs.renameSync(src, dest); } catch (_) {
+    try { fs.copyFileSync(src, dest); fs.unlinkSync(src); } catch (_) {}
+  }
+}
+
+function migrateIndexDir() {
+  // 总表 json/iwara-index.json、旧 sidecar 目录 → json/index/
+  ensureIndexDir();
+  moveFileIfNeeded(path.join(JSON_DIR, CATALOG_NAME), path.join(INDEX_DIR, CATALOG_NAME));
+  moveFileIfNeeded(path.join(DATA_DIR, CATALOG_NAME), path.join(INDEX_DIR, CATALOG_NAME));
+  const legacyDirs = [
+    path.join(JSON_DIR, "index-sidecars"),
+    path.join(DATA_DIR, "index-sidecars")
+  ];
+  for (const dir of legacyDirs) {
+    if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) continue;
+    let names = [];
+    try { names = fs.readdirSync(dir); } catch (_) { continue; }
+    for (const n of names) {
+      if (!n.toLowerCase().endsWith(".json")) continue;
+      moveFileIfNeeded(path.join(dir, n), path.join(INDEX_DIR, n));
+    }
+    try { fs.rmdirSync(dir); } catch (_) {}
+  }
 }
 
 function writeFetchableSidecar(id, entry) {
   if (!id || !entry) return null;
-  migrateSidecarCache();
+  migrateIndexDir();
   fs.mkdirSync(SIDECAR_CACHE, { recursive: true });
   const file = path.join(SIDECAR_CACHE, id + ".json");
   writeJson(file, sidecarPayload(id, entry));
@@ -56,7 +84,7 @@ function writeFetchableSidecar(id, entry) {
 
 function readFetchableSidecar(id, key) {
   if (!id || sidecarKey(id) !== String(key || "")) return null;
-  migrateSidecarCache();
+  migrateIndexDir();
   const file = path.join(SIDECAR_CACHE, id + ".json");
   const raw = readJson(file);
   if (!raw) return null;
@@ -74,12 +102,14 @@ function isWritableDir(dir) {
 }
 
 function serverCatalogPath() {
-  return jsonDir.migrateRuntimeJson(CATALOG_NAME); //userdata-manifest.json file json/iwara-index.json 本机精简视频索引总表
+  migrateIndexDir();
+  return path.join(INDEX_DIR, CATALOG_NAME);
 }
 
-/** 本机总表只在仓库根 json/；下载根目录不再落 iwara-index.json。 */
+/** 本机总表只在 json/index/；下载根目录不再落 iwara-index.json。 */
 function catalogRoots(downloadRoot) {
-  return [path.resolve(JSON_DIR)];
+  migrateIndexDir();
+  return [path.resolve(INDEX_DIR)];
 }
 
 function asTags(raw) {
@@ -335,7 +365,11 @@ function loadCatalogMap(root) {
 
 function saveCatalogMap(root, map) {
   const videos = {};
-  for (const [id, e] of Object.entries(map)) videos[id] = e;
+  migrateIndexDir();
+  for (const [id, e] of Object.entries(map)) {
+    videos[id] = e;
+    if (id && e) writeFetchableSidecar(id, e);
+  }
   writeJson(serverCatalogPath(), videos);
 }
 
@@ -372,6 +406,8 @@ function recordDownload(root, info, item, opts) {
     if (writeSidecarFile && item && item.savePath && (opts && opts.sidecarOnly || fs.existsSync(item.savePath))) {
       writeSidecar(item.savePath, packed.id, packed.entry);
     }
+    // 本机索引：总表 + json/index/<id>.json（不跟视频文件走）
+    writeFetchableSidecar(packed.id, packed.entry);
     const map = loadCatalogMap(root);
     map[packed.id] = packed.entry;
     saveCatalogMap(root, map);
@@ -387,6 +423,9 @@ function importPayload(root, raw) {
   const incoming = parseIndexPayload(raw);
   const map = loadCatalogMap(root);
   const r = mergeMap(map, incoming);
+  for (const [id, entry] of Object.entries(incoming)) {
+    if (id && entry) writeFetchableSidecar(id, entry);
+  }
   saveCatalogMap(root, map);
   return { ok: true, added: r.added, updated: r.updated, count: Object.keys(map).length };
 }
@@ -407,15 +446,23 @@ function listCatalog(root) {
   const catalogMap = loadCatalogMap(root);
   const result = {};
 
-  // ① 扫下载目录所有 JSON 文件，解析出 { [id]: entry }
+  // ① 扫下载目录 JSON + json/index/<id>.json
   const jsonFiles = [];
   if (root && fs.existsSync(root)) walkJsonFiles(root, jsonFiles, 0);
+  migrateIndexDir();
+  try {
+    for (const n of fs.readdirSync(INDEX_DIR)) {
+      if (!n.toLowerCase().endsWith(".json") || n === CATALOG_NAME) continue;
+      jsonFiles.push(path.join(INDEX_DIR, n));
+    }
+  } catch (_) {}
   const dataDirResolved = path.resolve(DATA_DIR);
   for (const jf of jsonFiles) {
     // 跳过总表文件本身（避免重复）
     if (path.resolve(jf) === path.resolve(catalogPath(root)) ||
         path.resolve(jf) === path.resolve(path.join(dataDirResolved, CATALOG_NAME)) ||
-        path.resolve(jf) === path.resolve(serverCatalogPath())) continue;
+        path.resolve(jf) === path.resolve(serverCatalogPath()) ||
+        path.basename(jf) === CATALOG_NAME) continue;
     const raw = readJson(jf);
     const entries = parseIndexPayload(raw);
     for (const [id, entry] of Object.entries(entries)) {

@@ -1,6 +1,7 @@
 # 运行态 JSON 在仓库根 json/（清单 json/userdata-manifest.json 入库）
 json/*.json
 !json/userdata-manifest.json
+json/index/
 json/index-sidecars/
 server/config.json
 server/sessions.json

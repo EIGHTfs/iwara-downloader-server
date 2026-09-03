@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "app": "iwara-downloader-server",
-  "generatedAt": "2026-09-03T19:20:34.811Z",
+  "generatedAt": "2026-09-03T19:24:43.181Z",
   "note": "导出时根据源码 //userdata-manifest.json 注释自动生成，不要手改。",
   "files": [
     {
@@ -15,10 +15,6 @@
     {
       "rel": "json/following_cache.json",
       "desc": "关注列表增量缓存"
-    },
-    {
-      "rel": "json/iwara-index.json",
-      "desc": "本机精简视频索引总表"
     },
     {
       "rel": "json/search_cache.json",
@@ -35,8 +31,8 @@
   ],
   "dirs": [
     {
-      "rel": "json/index-sidecars",
-      "desc": "aria2 可拉取的索引 sidecar",
+      "rel": "json/index",
+      "desc": "本机视频索引（总表 iwara-index.json + 每条 <id>.json）",
       "suffix": ".json"
     },
     {
