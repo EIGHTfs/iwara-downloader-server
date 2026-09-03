@@ -315,6 +315,25 @@ try {
     return "/api/thumb?id=" + encodeURIComponent(vid);
   }
 
+  function bindPlaylistThumbRetry(img, vid) {
+    var url = thumbUrl(vid);
+    img.onerror = function () {
+      var n = Number(this.dataset.try || 0) + 1;
+      this.dataset.try = String(n);
+      if (n < 10) {
+        var el = this;
+        setTimeout(function () {
+          el.style.visibility = "visible";
+          el.src = url + "&r=" + Date.now();
+        }, 400 * n);
+      }
+    };
+    img.onload = function () {
+      this.style.visibility = "visible";
+      this.dataset.try = "0";
+    };
+  }
+
   function renderPlaylist(clear) {
     var container = $("#playlist");
     var countEl = $("#listCount");
