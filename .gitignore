@@ -2,6 +2,8 @@
 json/*.json
 !json/userdata-manifest.json
 json/index/
+json/profile/
+avatar/
 json/index-sidecars/
 server/config.json
 server/sessions.json

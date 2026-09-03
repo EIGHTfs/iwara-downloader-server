@@ -364,13 +364,19 @@ function loadCatalogMap(root) {
 }
 
 function saveCatalogMap(root, map) {
+  // 只写总表。每条 json/index/<id>.json 由 recordDownload / import 增量写，对照 gbmd ingestModDir。
   const videos = {};
   migrateIndexDir();
-  for (const [id, e] of Object.entries(map)) {
-    videos[id] = e;
-    if (id && e) writeFetchableSidecar(id, e);
-  }
+  for (const [id, e] of Object.entries(map)) videos[id] = e;
   writeJson(serverCatalogPath(), videos);
+}
+
+function patchCatalog(id, entry) {
+  if (!id || !entry) return;
+  migrateIndexDir();
+  const map = parseIndexPayload(readJson(serverCatalogPath()));
+  map[id] = entry;
+  writeJson(serverCatalogPath(), map);
 }
 
 function writeSidecar(videoPath, id, entry) {
@@ -406,11 +412,9 @@ function recordDownload(root, info, item, opts) {
     if (writeSidecarFile && item && item.savePath && (opts && opts.sidecarOnly || fs.existsSync(item.savePath))) {
       writeSidecar(item.savePath, packed.id, packed.entry);
     }
-    // 本机索引：总表 + json/index/<id>.json（不跟视频文件走）
+    // 本机索引：只写这一条 <id>.json，总表补一条。对照 gbmd ingestModDir，禁止重写全部。
     writeFetchableSidecar(packed.id, packed.entry);
-    const map = loadCatalogMap(root);
-    map[packed.id] = packed.entry;
-    saveCatalogMap(root, map);
+    patchCatalog(packed.id, packed.entry);
     return packed;
   } catch (e) {
     console.error("[video-index] 写入失败:", e && e.message || e);
