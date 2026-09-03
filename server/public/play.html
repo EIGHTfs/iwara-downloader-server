@@ -164,18 +164,30 @@ try {
 <script>
 (function () {
   "use strict";
-  // ═══ ID 从 hash 读取：#id=xxx ═══
-  // 用户要求：切换视频不整页刷新，用 hash 导航
+  // ═══ ID：优先 hash #id=xxx，兼容查询 ?id=xxx ═══
+  // 用户原话：「视频播放网页第一次必须刷新才能加载视频，而且刷新后地址连接不对 http://sa6400.local:28463/play.html?id=hdEkJU8Ntkuic1#id=3dqVfrNJMgjoYZ」
+  // 【原代码】只读 location.hash；无 hash 时取索引第一个并 setIdToHash。
+  // 【改为】查询参数也当 id；无 hash 有 ?id= 时改写成 /play.html#id=xxx（去掉 query，避免刷新叠成 ?id=A#id=B）。
+  // 【思路】任务列表按钮以前写 ?id=，页面只认 hash → 第一次当「无 id」跳到目录第一条；刷新后 hash 才有值，看起来像必须刷新。
   function getIdFromHash() {
     var h = location.hash || "";
-    var m = h.match(/#id=([^&]*)/);
+    var m = h.match(/[#&]id=([^&]*)/);
+    return m ? decodeURIComponent(m[1]).trim() : "";
+  }
+  function getIdFromQuery() {
+    var q = location.search || "";
+    var m = q.match(/[?&]id=([^&]*)/);
     return m ? decodeURIComponent(m[1]).trim() : "";
   }
   function setIdToHash(newId) {
     if (newId) location.hash = "#id=" + encodeURIComponent(newId);
     else location.hash = "";
   }
-  var id = getIdFromHash();
+  var id = getIdFromHash() || getIdFromQuery();
+  if (id && !getIdFromHash()) {
+    var path = location.pathname || "/play.html";
+    history.replaceState(null, "", path + "#id=" + encodeURIComponent(id));
+  }
   var $ = function (s) { return document.querySelector(s); };
 
   function esc(s) {
@@ -210,7 +222,7 @@ try {
     };
   }
 
-  // ─── 无 id → 取列表第一个 ───
+  // ─── 无 id → 取列表第一个（仅真的没带 ?id= 也没 #id=）───
   if (!id) {
     fetch("/api/index").then(function (r) { return r.json(); }).then(function (j) {
       var map = (j && j.videos && typeof j.videos === "object") ? j.videos : {};
@@ -219,7 +231,8 @@ try {
       ids.sort(function (a, b) {
         return String((map[b] || {}).createdAt || "").localeCompare(String((map[a] || {}).createdAt || ""));
       });
-      setIdToHash(ids[0]);
+      var path = location.pathname || "/play.html";
+      location.replace(path + "#id=" + encodeURIComponent(ids[0]));
     }).catch(function () { $("#title").textContent = "加载列表失败"; });
     return;
   }

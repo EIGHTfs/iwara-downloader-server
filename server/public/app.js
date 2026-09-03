@@ -406,7 +406,7 @@ function renderTask(task) {
     }
     let actBtns = "";
     if (it.id) {
-      actBtns += '<a class="mm-play-btn" href="/play.html?id=' + encodeURIComponent(it.id) + '" target="_blank" rel="noopener" title="本地播放">▶ 播放</a>';
+      actBtns += '<a class="mm-play-btn" href="/play.html#id=' + encodeURIComponent(it.id) + '" target="_blank" rel="noopener" title="本地播放">▶ 播放</a>';
     }
     if (it.id && (it.state === "failed" || it.state === "error")) {
       actBtns += '<button type="button" class="mm-retry-btn" data-id="' + esc(it.id) + '" title="重试下载此视频">🔄 重试</button>' +
