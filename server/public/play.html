@@ -320,16 +320,17 @@ try {
     img.onerror = function () {
       var n = Number(this.dataset.try || 0) + 1;
       this.dataset.try = String(n);
-      if (n < 10) {
-        var el = this;
-        setTimeout(function () {
-          el.style.visibility = "visible";
-          el.src = url + "&r=" + Date.now();
-        }, 400 * n);
-      }
+      var el = this;
+      var wait = n < 8 ? 400 * n : 2000;
+      setTimeout(function () {
+        el.style.visibility = "visible";
+        el.style.display = "";
+        el.src = url + "&r=" + Date.now();
+      }, wait);
     };
     img.onload = function () {
       this.style.visibility = "visible";
+      this.style.display = "";
       this.dataset.try = "0";
     };
   }

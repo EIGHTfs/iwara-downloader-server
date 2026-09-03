@@ -384,12 +384,9 @@ function renderTask(task) {
       img.onerror = function () {
         var n = Number(this.dataset.try || 0) + 1;
         this.dataset.try = String(n);
-        if (n < 8) {
-          var el = this;
-          setTimeout(function () { el.style.display = ""; el.src = thumbUrl + "&r=" + Date.now(); }, 400 * n);
-        } else {
-          this.style.display = "none";
-        }
+        var el = this;
+        var wait = n < 8 ? 400 * n : 2000;
+        setTimeout(function () { el.style.display = ""; el.src = thumbUrl + "&r=" + Date.now(); }, wait);
       };
       img.onload = function () { this.style.display = ""; this.dataset.try = "0"; };
     }
@@ -790,7 +787,7 @@ function resultItemHtml(v) {
   const href = "https://www.iwara.tv/video/" + encodeURIComponent(id);
   const src = thumbSrc(v);
   const img = src
-    ? `<img class="row-thumb" src="${esc(src)}" alt="" loading="lazy" onload="this.style.display=''" onerror="var n=Number(this.dataset.try||0)+1;this.dataset.try=n;if(n<5){var el=this;setTimeout(function(){el.src=el.getAttribute('data-base')+'&r='+Date.now();},600*n);}else{this.style.display='none';}" data-base="${esc(src)}">`
+    ? `<img class="row-thumb" src="${esc(src)}" alt="" loading="lazy" data-base="${esc(src)}">`
     : `<div class="row-thumb" style="background:var(--card2)"></div>`;
   return `<div class="result-item">
     <input type="checkbox" data-id="${esc(id)}" onclick="event.stopPropagation()">
@@ -809,6 +806,22 @@ function fillResultList(boxSel, countSel, list) {
   if (countEl) countEl.textContent = shown.length ? ("共 " + shown.length + " 条") : "";
   if (!shown.length) { box.innerHTML = '<div class="empty">无结果</div>'; return; }
   box.innerHTML = shown.map(resultItemHtml).join("");
+  box.querySelectorAll("img.row-thumb[data-base]").forEach(bindListThumbRetry);
+}
+
+function bindListThumbRetry(img) {
+  var base = img.getAttribute("data-base") || img.src;
+  img.onerror = function () {
+    var n = Number(this.dataset.try || 0) + 1;
+    this.dataset.try = String(n);
+    var el = this;
+    var wait = n < 8 ? 400 * n : 2000;
+    setTimeout(function () {
+      el.style.display = "";
+      el.src = base + (base.indexOf("?") >= 0 ? "&" : "?") + "r=" + Date.now();
+    }, wait);
+  };
+  img.onload = function () { this.style.display = ""; this.dataset.try = "0"; };
 }
 
 function renderSearchResults() {

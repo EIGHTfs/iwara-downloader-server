@@ -351,7 +351,7 @@ const server = http.createServer(async (req, res) => {
       const headers = {
         "Content-Type": img.contentType || "image/jpeg",
         "Content-Length": img.buf.length,
-        "Cache-Control": "no-cache",
+        "Cache-Control": "no-store",
         ETag: etag
       };
       if (img.mtimeMs) headers["Last-Modified"] = new Date(img.mtimeMs).toUTCString();
