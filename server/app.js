@@ -811,7 +811,8 @@ const server = http.createServer(async (req, res) => {
     if (method === "POST" && pathname === "/api/rename-files") {
       const body = await readBody(req);
       const dryRun = body && body.dryRun === false ? false : true;
-      return sendJson(res, 200, renameFiles.executePlan(dryRun));
+      const forceFrom = body && body.forceFrom ? String(body.forceFrom) : "";
+      return sendJson(res, 200, renameFiles.executePlan(dryRun, { forceFrom }));
     }
 
     // ---- 播放短链 /{id} ----

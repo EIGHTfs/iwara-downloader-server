@@ -169,7 +169,7 @@ try {
         </label>
       </div>
       <h3 style="margin:14px 0 8px;font-size:14px;color:var(--primary)">✏️ 按模板重命名文件</h3>
-      <p class="hint" style="margin:4px 0 8px">只认 json/index 里的 id（不从文件名猜）。含 id 但不是当前模板的（包括文件名多「 (1)」）先预览。目标已存在不覆盖。对照 gbmd：预览 → 确认执行。</p>
+      <p class="hint" style="margin:4px 0 8px">只认 json/index 里的 id。预览后点确认执行（无弹窗）。目标已存在会失败，可对那一条点「强制执行」覆盖重复。</p>
       <div class="row">
         <button id="renamePreviewBtn" type="button">预览重命名计划</button>
         <button id="renameGoBtn" type="button">确认执行</button>

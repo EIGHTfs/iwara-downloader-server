@@ -1196,34 +1196,56 @@ function bindSettings() {
       setStatus(st, "导出失败: " + (e && e.message || e), "err");
     }
   });
-  async function runRename(dryRun) {
+  function renderRenameErrors(errors) {
+    return (errors || []).map((e) => {
+      const force = e.canForce
+        ? '<button type="button" class="mm-retry-btn rename-force-btn" data-from="' + esc(e.from) + '">强制执行</button>'
+        : "";
+      return '<div class="item fail"><span class="item-name">' + esc(e.from) + " → " + esc(e.to || "") + "：" + esc(e.error) + "</span>" + force + "</div>";
+    }).join("");
+  }
+  async function runRename(dryRun, extra) {
     const st = $("#renameStatus");
     const el = $("#renamePlan");
-    if (st) st.textContent = dryRun ? "扫描中…" : "执行中…";
+    extra = extra || {};
+    if (st) st.textContent = extra.forceFrom ? "强制覆盖中…" : (dryRun ? "扫描中…" : "执行中…");
     try {
-      const r = await api("/api/rename-files", "POST", { dryRun: dryRun });
+      const body = Object.assign({ dryRun: dryRun }, extra);
+      const r = await api("/api/rename-files", "POST", body);
       if (!r.ok) throw new Error(r.error || "失败");
       if (dryRun) {
         const rows = (r.plan || []).slice(0, 200).map((row) => {
-          const warn = row.exists ? " ⚠目标已存在" : "";
+          const warn = row.exists ? " ⚠目标已存在（确认执行后可单条强制覆盖）" : "";
           return "<div class=\"item\"><span class=\"item-name\">" + esc(row.fromName) + " → " + esc(row.toName) + warn + "</span></div>";
         }).join("");
         if (el) el.innerHTML = rows || "<div class=\"empty\">没有需要改名的文件</div>";
-        if (st) st.textContent = "待改名 " + (r.count || 0) + " 个" + (r.skipped ? "，跳过 " + r.skipped : "");
+        if (st) st.textContent = "视频 " + (r.videoCount || 0) + "，json " + (r.indexCount || 0) + "，待改名 " + (r.count || 0) + (r.skipped ? "，跳过 " + r.skipped : "");
       } else {
         if (st) st.textContent = "已改名 " + (r.renamed || 0) + "，失败 " + (r.failed || 0);
-        if (el && r.errors && r.errors.length) {
-          el.innerHTML = r.errors.map((e) => "<div class=\"item fail\">" + esc(e.from) + "：" + esc(e.error) + "</div>").join("");
+        if (el) {
+          const okRows = (r.items || []).map((it) => "<div class=\"item\"><span class=\"item-name\">" + esc(it.from) + " → " + esc(it.to) + "</span></div>").join("");
+          el.innerHTML = okRows + renderRenameErrors(r.errors);
         }
+        showFeedback("已改名 " + (r.renamed || 0) + "，失败 " + (r.failed || 0), r.failed ? "err" : "ok");
       }
     } catch (e) {
       if (st) st.textContent = e.message || String(e);
+      showFeedback(e.message || String(e), "err");
     }
   }
   if ($("#renamePreviewBtn")) $("#renamePreviewBtn").addEventListener("click", () => runRename(true));
-  if ($("#renameGoBtn")) $("#renameGoBtn").addEventListener("click", async () => {
-    if (!confirm("按当前模板批量重命名？目标已存在的会跳过。")) return;
-    await runRename(false);
+  if ($("#renameGoBtn")) $("#renameGoBtn").addEventListener("click", () => {
+    // 用户原话：「iwara确认执行后的弹窗不要，项目禁止哪种原生弹窗」
+    // 禁止 window.confirm / alert / prompt，用页面内 toast + 状态行。
+    runRename(false);
+  });
+  if ($("#renamePlan")) $("#renamePlan").addEventListener("click", async (ev) => {
+    const btn = ev.target && ev.target.closest && ev.target.closest(".rename-force-btn");
+    if (!btn) return;
+    const from = btn.getAttribute("data-from");
+    if (!from) return;
+    btn.disabled = true;
+    await runRename(false, { forceFrom: from });
   });
   $("#importIndexBtn").addEventListener("click", () => { $("#importIndexFile").click(); });
   $("#importIndexFile").addEventListener("change", async (ev) => {

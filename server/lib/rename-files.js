@@ -149,31 +149,51 @@ function scanPlan() {
   };
 }
 
-function executePlan(dryRun) {
+function underRoot(root, full) {
+  const a = path.resolve(root);
+  const b = path.resolve(full);
+  return b === a || b.startsWith(a + path.sep);
+}
+
+function executePlan(dryRun, opts) {
   const scanned = scanPlan();
   if (!scanned.ok) return scanned;
   if (dryRun !== false) {
     return Object.assign({ dryRun: true }, scanned);
   }
-  // 用户原话：「是不是意外实现去重了」——禁止 rename 覆盖；目标已存在或本批已占用该目标则跳过。
+  opts = opts || {};
+  const forceName = String(opts.forceFrom || "").trim();
+  // 用户原话：「目标已存在时点确认执行，给失败的任务单个加个强制执行，专门用于覆盖重复」
+  // 批量默认不覆盖；forceFrom 只改这一条，允许覆盖已有目标。
+  const rows = forceName
+    ? scanned.plan.filter((row) => row.fromName === forceName)
+    : scanned.plan;
+  if (forceName && !rows.length) {
+    return { ok: false, error: "没有这条待改名文件（先预览，或 id 不在 json）" };
+  }
   const renamed = [];
   const failed = [];
   const taken = new Set();
-  for (const row of scanned.plan) {
+  for (const row of rows) {
+    if (!underRoot(scanned.root, row.from) || !underRoot(scanned.root, row.to)) {
+      failed.push({ from: row.fromName, to: row.toName, error: "路径超出下载目录", canForce: false });
+      continue;
+    }
     const dest = path.resolve(row.to);
     let destExists = false;
     try { destExists = fs.existsSync(row.to); } catch (_) { destExists = false; }
-    if (destExists || taken.has(dest)) {
-      failed.push({ from: row.fromName, to: row.toName, error: "目标已存在，拒绝覆盖（避免去重丢文件）" });
+    const force = !!forceName;
+    if (!force && (destExists || taken.has(dest))) {
+      failed.push({ from: row.fromName, to: row.toName, error: "目标已存在", canForce: true });
       continue;
     }
     try {
       fs.mkdirSync(path.dirname(row.to), { recursive: true });
       fs.renameSync(row.from, row.to);
       taken.add(dest);
-      renamed.push({ from: row.fromName, to: row.toName, id: row.id });
+      renamed.push({ from: row.fromName, to: row.toName, id: row.id, forced: force });
     } catch (e) {
-      failed.push({ from: row.fromName, to: row.toName, error: String(e.message || e) });
+      failed.push({ from: row.fromName, to: row.toName, error: String(e.message || e), canForce: destExists });
     }
   }
   const after = scanPlan();
