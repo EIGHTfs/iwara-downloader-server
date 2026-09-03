@@ -1,0 +1,57 @@
+{
+  "schema": 1,
+  "app": "iwara-downloader-server",
+  "note": "用户数据文件清单。备份/恢复按此收集与写回。运行态 JSON 在仓库根 json/；config.json 例外仍在 server/。本清单在 json/userdata-manifest.json。",
+  "files": [
+    {
+      "rel": "server/config.json",
+      "desc": "服务配置（例外留在 server/）：iwaraToken / iwaraCookie、下载路径、aria2 RPC、密码哈希、端口等"
+    },
+    {
+      "rel": "json/download_task.json",
+      "desc": "下载任务列表（含进度/状态/直链 URL，启动时恢复）"
+    },
+    {
+      "rel": "json/search_cache.json",
+      "desc": "搜索记录缓存（保存/导入导出）"
+    },
+    {
+      "rel": "json/search_task.json",
+      "desc": "按时间搜索任务状态（启动时恢复未完成搜索）"
+    },
+    {
+      "rel": "json/cdn_hosts_state.json",
+      "desc": "CDN 子域动态列表（成功/失败，随下载自动增删）"
+    },
+    {
+      "rel": "json/following_cache.json",
+      "desc": "登录账号关注用户列表（按时间序增量同步）"
+    },
+    {
+      "rel": "json/iwara-index.json",
+      "desc": "本机精简视频索引总表"
+    },
+    {
+      "rel": "json/sessions.json",
+      "desc": "网页登录 session"
+    },
+    {
+      "rel": "server/server.log",
+      "desc": "运行日志"
+    },
+    {
+      "rel": "server/app.pid",
+      "desc": "进程 PID（启停脚本使用）"
+    }
+  ],
+  "dirs": [
+    {
+      "rel": "server/thumbs",
+      "desc": "本机封面缓存（官方封面/ffmpeg 抽帧，按视频 id.jpg）"
+    },
+    {
+      "rel": "json/index-sidecars",
+      "desc": "aria2 可拉取的索引 sidecar 缓存"
+    }
+  ]
+}

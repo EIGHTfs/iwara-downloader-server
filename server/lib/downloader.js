@@ -22,8 +22,9 @@ const videoIndex = require("./video-index");
 const deviceCheck = require("./device-check");
 const thumbCache = require("./thumb-cache.cjs");
 
-const DATA_DIR = process.env.GBMD_DATA_DIR || __dirname;
-const TASK_FILE = path.join(DATA_DIR, "..", "download_task.json");
+const jsonDir = require("./json-dir");
+const DATA_DIR = jsonDir.SERVER_DIR;
+const TASK_FILE = jsonDir.migrateRuntimeJson("download_task.json");
 const MAX_RETRY = 3;
 const RETRY_DELAY_MS = 2000;
 
@@ -36,7 +37,7 @@ const RETRY_DELAY_MS = 2000;
 //   - 成功后：该子域移出 BAD、加入 GOOD
 //   - 失败后：该子域移出 GOOD、加入 BAD
 //   - 因此成功/失败子域会随实际下载结果动态增删，无需硬编码维护
-const CDN_STATE_FILE = path.join(DATA_DIR, "..", "cdn_hosts_state.json");
+const CDN_STATE_FILE = jsonDir.migrateRuntimeJson("cdn_hosts_state.json");
 let GOOD_CDN_HOSTS = new Set();             // 已成功子域（按成功时间追加，越新越优先）
 let BAD_CDN_HOSTS = new Set();              // 已失败子域
 // 种子列表：初始候选（首次运行无成功记录时用；也会随下载动态增删修正）
@@ -59,6 +60,7 @@ function cdnLoadState() {
 // 写入外部文件（每次增删都落盘，保证重启后仍记住成功/失败子域）
 function cdnSaveState() {
   try {
+    jsonDir.ensureJsonDir();
     fs.writeFileSync(CDN_STATE_FILE, JSON.stringify({
       good: [...GOOD_CDN_HOSTS],
       bad: [...BAD_CDN_HOSTS],
@@ -191,7 +193,7 @@ function fmtSize(bytes) {
 
 // ---------- 任务持久化 ----------
 function saveTask() {
-  try { fs.writeFileSync(TASK_FILE, JSON.stringify(task, null, 2), "utf8"); } catch (_) {}
+  try { jsonDir.ensureJsonDir(); fs.writeFileSync(TASK_FILE, JSON.stringify(task, null, 2), "utf8"); } catch (_) {}
 }
 
 function getTask() { return task; }

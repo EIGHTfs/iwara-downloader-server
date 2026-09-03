@@ -49,7 +49,7 @@ if (process.argv.includes("--set-password")) {
   const pwd = process.argv[idx + 1];
   if (!pwd) { console.error('用法: node app.js --set-password "你的密码"'); process.exit(1); }
   cfg.setPassword(pwd);
-  console.log("密码已设置（scrypt 哈希存入 config.json）");
+  console.log("密码已设置（scrypt 哈希存入 server/config.json）");
   process.exit(0);
 }
 let CLI_PORT = null;

@@ -23,9 +23,11 @@ const path = require("path");
 
 const crypto = require("crypto");
 const SCHEMA = "iwara-index/1";
+const jsonDir = require("./json-dir");
 const CATALOG_NAME = "iwara-index.json";
-const DATA_DIR = process.env.GBMD_DATA_DIR || path.join(__dirname, "..");
-const SIDECAR_CACHE = path.join(DATA_DIR, "index-sidecars");
+const DATA_DIR = jsonDir.SERVER_DIR;
+const JSON_DIR = jsonDir.JSON_DIR;
+const SIDECAR_CACHE = path.join(JSON_DIR, "index-sidecars");
 
 function sidecarKey(id) {
   const cfg = require("../config").readConfig();
@@ -33,8 +35,19 @@ function sidecarKey(id) {
   return crypto.createHmac("sha256", String(secret)).update(String(id)).digest("hex").slice(0, 16);
 }
 
+function migrateSidecarCache() {
+  const legacy = path.join(DATA_DIR, "index-sidecars");
+  try {
+    if (fs.existsSync(SIDECAR_CACHE)) return;
+    if (!fs.existsSync(legacy) || !fs.statSync(legacy).isDirectory()) return;
+    fs.mkdirSync(JSON_DIR, { recursive: true });
+    fs.renameSync(legacy, SIDECAR_CACHE);
+  } catch (_) {}
+}
+
 function writeFetchableSidecar(id, entry) {
   if (!id || !entry) return null;
+  migrateSidecarCache();
   fs.mkdirSync(SIDECAR_CACHE, { recursive: true });
   const file = path.join(SIDECAR_CACHE, id + ".json");
   writeJson(file, sidecarPayload(id, entry));
@@ -43,6 +56,7 @@ function writeFetchableSidecar(id, entry) {
 
 function readFetchableSidecar(id, key) {
   if (!id || sidecarKey(id) !== String(key || "")) return null;
+  migrateSidecarCache();
   const file = path.join(SIDECAR_CACHE, id + ".json");
   const raw = readJson(file);
   if (!raw) return null;
@@ -59,16 +73,13 @@ function isWritableDir(dir) {
   }
 }
 
-/** 下载根目录（Aria2 机器上的路径）可能本机不可写；数据目录一定写。 */
+function serverCatalogPath() {
+  return jsonDir.migrateRuntimeJson(CATALOG_NAME);
+}
+
+/** 本机总表只在仓库根 json/；下载根目录不再落 iwara-index.json。 */
 function catalogRoots(downloadRoot) {
-  const out = [];
-  const data = path.resolve(DATA_DIR);
-  if (downloadRoot) {
-    const r = path.resolve(downloadRoot);
-    if (r !== data) out.push(r);
-  }
-  out.push(data);
-  return out;
+  return [path.resolve(JSON_DIR)];
 }
 
 function asTags(raw) {
@@ -325,26 +336,7 @@ function loadCatalogMap(root) {
 function saveCatalogMap(root, map) {
   const videos = {};
   for (const [id, e] of Object.entries(map)) videos[id] = e;
-  let saved = 0;
-  const errors = [];
-  for (const r of catalogRoots(root)) {
-    try {
-      if (path.resolve(r) === path.resolve(DATA_DIR)) {
-        writeJson(catalogPath(r), videos);
-        saved++;
-        continue;
-      }
-      if (!isWritableDir(r)) {
-        errors.push(r + " 不可写");
-        continue;
-      }
-      writeJson(catalogPath(r), videos);
-      saved++;
-    } catch (e) {
-      errors.push(r + ": " + (e && e.message || e));
-    }
-  }
-  if (!saved) throw new Error(errors.join("; ") || "无可用索引目录");
+  writeJson(serverCatalogPath(), videos);
 }
 
 function writeSidecar(videoPath, id, entry) {
@@ -422,7 +414,8 @@ function listCatalog(root) {
   for (const jf of jsonFiles) {
     // 跳过总表文件本身（避免重复）
     if (path.resolve(jf) === path.resolve(catalogPath(root)) ||
-        path.resolve(jf) === path.resolve(path.join(dataDirResolved, CATALOG_NAME))) continue;
+        path.resolve(jf) === path.resolve(path.join(dataDirResolved, CATALOG_NAME)) ||
+        path.resolve(jf) === path.resolve(serverCatalogPath())) continue;
     const raw = readJson(jf);
     const entries = parseIndexPayload(raw);
     for (const [id, entry] of Object.entries(entries)) {

@@ -8,8 +8,8 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 
-const DATA_DIR = process.env.GBMD_DATA_DIR || __dirname;
-const SESSIONS_FILE = path.join(DATA_DIR, "sessions.json");
+const jsonDir = require("./lib/json-dir");
+const SESSIONS_FILE = jsonDir.migrateRuntimeJson("sessions.json");
 
 let sessions = new Map(); // token -> expireTs
 
@@ -24,6 +24,7 @@ function loadSessions() {
 
 function saveSessions() {
   try {
+    require("./lib/json-dir").ensureJsonDir();
     fs.writeFileSync(SESSIONS_FILE, JSON.stringify(Object.fromEntries(sessions), null, 2), "utf8");
   } catch (_) {}
 }

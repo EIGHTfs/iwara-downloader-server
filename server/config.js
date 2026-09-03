@@ -9,8 +9,20 @@ const path = require("path");
 const crypto = require("crypto");
 
 // 数据目录：Electron 打包后经 GBMD_DATA_DIR 重定向，默认本项目 server/
-const DATA_DIR = process.env.GBMD_DATA_DIR || __dirname;
+const jsonDir = require("./lib/json-dir");
+const DATA_DIR = jsonDir.SERVER_DIR;
+// config.json 例外：留在 server/。用户原话：「config.json是例外本来就应该在server文件夹」
 const CONFIG_FILE = path.join(DATA_DIR, "config.json");
+(function restoreConfigFromJsonDir() {
+  const misplaced = jsonDir.jsonFile("config.json");
+  try {
+    if (!fs.existsSync(CONFIG_FILE) && fs.existsSync(misplaced)) {
+      fs.renameSync(misplaced, CONFIG_FILE);
+    } else if (fs.existsSync(CONFIG_FILE) && fs.existsSync(misplaced)) {
+      fs.unlinkSync(misplaced);
+    }
+  } catch (_) {}
+})();
 
 const DEFAULT_CONFIG = {
   port: 8643,
@@ -96,6 +108,7 @@ function readConfig() {
 }
 
 function writeConfig(obj) {
+  jsonDir.ensureJsonDir();
   fs.writeFileSync(CONFIG_FILE, JSON.stringify(obj, null, 2), "utf8");
   return obj;
 }

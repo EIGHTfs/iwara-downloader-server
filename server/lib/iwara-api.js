@@ -21,7 +21,9 @@ const https = require("https");
 const zlib = require("zlib");
 
 const cfg = require("../config");
-const DATA_DIR = process.env.GBMD_DATA_DIR || path.join(__dirname, "..");
+const jsonDir = require("./json-dir");
+const DATA_DIR = jsonDir.SERVER_DIR;
+const JSON_DIR = jsonDir.JSON_DIR;
 
 const API_HOST = "api.iwara.tv";
 const X_VERSION_SECRET = "mSvL05GfEmeEmsEYfGCnVpEjYgTJraJN";
@@ -295,7 +297,7 @@ async function checkLogin(opts) {
  *   2. 合并 = 新增 + 原有（从重合点起）
  *   3. 若合并条数 < 远端 total → 中间有删关注，才继续往更旧的页找
  */
-const FOLLOW_FILE = path.join(DATA_DIR, "following_cache.json");
+const FOLLOW_FILE = jsonDir.migrateRuntimeJson("following_cache.json");
 const FOLLOW_LIMIT = 50;
 let followingMem = null;
 
@@ -335,6 +337,7 @@ function loadFollowingStore() {
 function saveFollowingStore(packed) {
   followingMem = packed;
   try {
+    jsonDir.ensureJsonDir();
     fs.writeFileSync(FOLLOW_FILE, JSON.stringify({
       me: packed.me,
       following: packed.following,

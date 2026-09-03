@@ -10,9 +10,9 @@ const path = require("path");
 const api = require("./iwara-api");
 const thumbCache = require("./thumb-cache.cjs");
 
-const DATA_DIR = process.env.GBMD_DATA_DIR || path.join(__dirname, "..");
-const QUERY_FILE = path.join(DATA_DIR, "search_task.json");
-const CACHE_FILE = path.join(DATA_DIR, "search_cache.json");
+const jsonDir = require("./json-dir");
+const QUERY_FILE = jsonDir.migrateRuntimeJson("search_task.json");
+const CACHE_FILE = jsonDir.migrateRuntimeJson("search_cache.json");
 
 const MAX_PAGES = 80;
 const MAX_RESULTS = 2000;
@@ -70,6 +70,7 @@ function saveQueryTask() {
   try {
     const t = queryTask ? Object.assign({}, queryTask) : null;
     if (t) delete t.abortCtl;
+    jsonDir.ensureJsonDir();
     fs.writeFileSync(QUERY_FILE, JSON.stringify(t, null, 2), "utf8");
   } catch (_) {}
 }
@@ -83,6 +84,7 @@ function saveCache(explicit) {
       contentFilter: (queryTask && queryTask.contentFilter) || ["normal", "nsfw"],
       queryTime: Date.now()
     };
+    jsonDir.ensureJsonDir();
     fs.writeFileSync(CACHE_FILE, JSON.stringify(data), "utf8");
   } catch (_) {}
 }
