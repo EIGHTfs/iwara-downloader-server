@@ -297,7 +297,7 @@ async function checkLogin(opts) {
  *   2. 合并 = 新增 + 原有（从重合点起）
  *   3. 若合并条数 < 远端 total → 中间有删关注，才继续往更旧的页找
  */
-const FOLLOW_FILE = jsonDir.migrateRuntimeJson("following_cache.json");
+const FOLLOW_FILE = jsonDir.migrateRuntimeJson("following_cache.json"); //userdata-manifest.json file json/following_cache.json 关注列表增量缓存
 const FOLLOW_LIMIT = 50;
 let followingMem = null;
 

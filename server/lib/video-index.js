@@ -27,7 +27,7 @@ const jsonDir = require("./json-dir");
 const CATALOG_NAME = "iwara-index.json";
 const DATA_DIR = jsonDir.SERVER_DIR;
 const JSON_DIR = jsonDir.JSON_DIR;
-const SIDECAR_CACHE = path.join(JSON_DIR, "index-sidecars");
+const SIDECAR_CACHE = path.join(JSON_DIR, "index-sidecars"); //userdata-manifest.json dir json/index-sidecars .json aria2 可拉取的索引 sidecar
 
 function sidecarKey(id) {
   const cfg = require("../config").readConfig();
@@ -74,7 +74,7 @@ function isWritableDir(dir) {
 }
 
 function serverCatalogPath() {
-  return jsonDir.migrateRuntimeJson(CATALOG_NAME);
+  return jsonDir.migrateRuntimeJson(CATALOG_NAME); //userdata-manifest.json file json/iwara-index.json 本机精简视频索引总表
 }
 
 /** 本机总表只在仓库根 json/；下载根目录不再落 iwara-index.json。 */

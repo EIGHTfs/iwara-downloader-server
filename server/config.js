@@ -12,7 +12,7 @@ const crypto = require("crypto");
 const jsonDir = require("./lib/json-dir");
 const DATA_DIR = jsonDir.SERVER_DIR;
 // config.json 例外：留在 server/。用户原话：「config.json是例外本来就应该在server文件夹」
-const CONFIG_FILE = path.join(DATA_DIR, "config.json");
+const CONFIG_FILE = path.join(DATA_DIR, "config.json"); //userdata-manifest.json file server/config.json 服务配置（例外留在 server/）
 (function restoreConfigFromJsonDir() {
   const misplaced = jsonDir.jsonFile("config.json");
   try {

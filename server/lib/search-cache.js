@@ -11,8 +11,8 @@ const api = require("./iwara-api");
 const thumbCache = require("./thumb-cache.cjs");
 
 const jsonDir = require("./json-dir");
-const QUERY_FILE = jsonDir.migrateRuntimeJson("search_task.json");
-const CACHE_FILE = jsonDir.migrateRuntimeJson("search_cache.json");
+const QUERY_FILE = jsonDir.migrateRuntimeJson("search_task.json"); //userdata-manifest.json file json/search_task.json 搜索任务状态
+const CACHE_FILE = jsonDir.migrateRuntimeJson("search_cache.json"); //userdata-manifest.json file json/search_cache.json 搜索记录缓存
 
 const MAX_PAGES = 80;
 const MAX_RESULTS = 2000;

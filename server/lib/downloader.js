@@ -24,7 +24,7 @@ const thumbCache = require("./thumb-cache.cjs");
 
 const jsonDir = require("./json-dir");
 const DATA_DIR = jsonDir.SERVER_DIR;
-const TASK_FILE = jsonDir.migrateRuntimeJson("download_task.json");
+const TASK_FILE = jsonDir.migrateRuntimeJson("download_task.json"); //userdata-manifest.json file json/download_task.json 下载任务列表
 const MAX_RETRY = 3;
 const RETRY_DELAY_MS = 2000;
 
@@ -37,7 +37,7 @@ const RETRY_DELAY_MS = 2000;
 //   - 成功后：该子域移出 BAD、加入 GOOD
 //   - 失败后：该子域移出 GOOD、加入 BAD
 //   - 因此成功/失败子域会随实际下载结果动态增删，无需硬编码维护
-const CDN_STATE_FILE = jsonDir.migrateRuntimeJson("cdn_hosts_state.json");
+const CDN_STATE_FILE = jsonDir.migrateRuntimeJson("cdn_hosts_state.json"); //userdata-manifest.json file json/cdn_hosts_state.json CDN 子域成功/失败列表
 let GOOD_CDN_HOSTS = new Set();             // 已成功子域（按成功时间追加，越新越优先）
 let BAD_CDN_HOSTS = new Set();              // 已失败子域
 // 种子列表：初始候选（首次运行无成功记录时用；也会随下载动态增删修正）

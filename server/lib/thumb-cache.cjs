@@ -12,7 +12,7 @@ const api = require("./iwara-api");
 
 const DATA_DIR = process.env.GBMD_DATA_DIR || path.join(__dirname, "..");
 const PROJECT_ROOT = path.join(__dirname, "..", "..");
-const THUMB_DIR = path.join(DATA_DIR, "thumbs");
+const THUMB_DIR = path.join(DATA_DIR, "thumbs"); //userdata-manifest.json dir server/thumbs .jpg 本机封面缓存 thumbs/<id>.jpg
 const inflight = new Map();
 
 function safeId(id) {
