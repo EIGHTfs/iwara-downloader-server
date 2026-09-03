@@ -427,20 +427,26 @@ function aria2FileName(st) {
   return "";
 }
 
+function aria2IsVideoName(name) {
+  return /\.(mp4|webm|mov|mkv)$/i.test(String(name || ""));
+}
+
 function aria2StatusHasId(st, id, fileName) {
+  // sidecar JSON 文件名也带 [id]，不能当成视频已下完
   const vid = String(id || "");
   const needle = vid ? "[" + vid + "]" : "";
   const name = aria2FileName(st);
+  if (!aria2IsVideoName(name)) return false;
   if (needle && name && name.indexOf(needle) >= 0) return true;
   if (fileName && name && name === sanitizeFileName(fileName)) return true;
   const uris = ((st && st.files && st.files[0] && st.files[0].uris) || []).map((u) => String(u.uri || ""));
-  if (vid && uris.some((u) => u.indexOf(vid) >= 0)) return true;
+  if (vid && uris.some((u) => u.indexOf("/api/index-sidecar") < 0 && u.indexOf(vid) >= 0)) return true;
   return false;
 }
 
 async function aria2TellList(method) {
   try {
-    const keys = ["gid", "status", "files", "totalLength", "completedLength"];
+    const keys = ["gid", "status", "files", "totalLength", "completedLength", "errorCode", "errorMessage"];
     // tellActive 只有 keys；tellWaiting/tellStopped 才是 offset, num, keys
     const params = method === "aria2.tellActive" ? [keys] : [0, 1000, keys];
     const r = await aria2Rpc(method, params);
@@ -451,17 +457,26 @@ async function aria2TellList(method) {
   }
 }
 
-/** 活动 / 等待 / 已完成 里已有同视频 → 视为已下过。 */
+/** 活动 / 等待 / 真正下完 里已有同视频 → 视为已下过。失败不算。 */
 async function aria2AlreadyHas(id, fileName) {
-  const lists = await Promise.all([
+  // 2026-09-04：失败任务不能当已下载。
+  // 【原代码】tellActive + tellWaiting + tellStopped 任一命中就 return true。
+  // 【改为】用户原话「Aria2 已有此文件，跳过。错误的，因为aria2实际下载失败了你也算下载过了，Failed to connect to the host 2001::a27d:108, cause: Network is unreac」
+  // 【思路】tellStopped 含 complete 和 error。error（IPv6 不通、403）也匹配文件名就被跳过。
+  //   只认 active/waiting，或 stopped 且 status=complete 且 completedLength>0。
+  const [active, waiting, stopped] = await Promise.all([
     aria2TellList("aria2.tellActive"),
     aria2TellList("aria2.tellWaiting"),
     aria2TellList("aria2.tellStopped")
   ]);
-  for (const list of lists) {
-    for (const st of list) {
-      if (aria2StatusHasId(st, id, fileName)) return true;
-    }
+  for (const st of active.concat(waiting)) {
+    if (aria2StatusHasId(st, id, fileName)) return true;
+  }
+  for (const st of stopped) {
+    if (!aria2StatusHasId(st, id, fileName)) continue;
+    const status = String(st.status || "");
+    const done = parseInt(st.completedLength, 10) || 0;
+    if (status === "complete" && done > 0) return true;
   }
   return false;
 }
@@ -520,6 +535,9 @@ async function aria2Add(item) {
   options["max-connection-per-server"] = "4";
   options.split = "4";
   options["allow-overwrite"] = "false";
+  // 2026-09-04：禁 IPv6。用户原话里失败原因 Failed to connect to the host 2001::a27d:108 Network is unreachable。
+  // 【思路】群晖 aria2 会解析出 AAAA，本机 IPv6 不通；强制 IPv4。
+  options["disable-ipv6"] = "true";
   // 关键：aria2 默认 UA 是 aria2/1.37.0，Cloudflare 会 403 拦截；
   // 必须带精简浏览器 UA（NO_AWK 版，与 direct 后端一致）才能过 CF
   const headers = [`User-Agent: ${api.DEFAULT_UA}`];
@@ -992,7 +1010,8 @@ async function startDownloadTask(items) {
     if (!id) continue;
     const exist = task.items.find((x) => x.id === id);
     if (exist) {
-      if (exist.state === "done" || exist.state === "skipped" || exist.state === "submitted" || exist.state === "downloading") continue;
+      // skipped 可能是误判「Aria2 已有」；用户再次入队应重试，不把失败当完成
+      if (exist.state === "done" || exist.state === "submitted" || exist.state === "downloading") continue;
       exist.state = "pending";
       exist.retries = 0;
       exist.error = "";
