@@ -210,6 +210,16 @@ function sidecarPath(videoPath) {
 
 const VIDEO_EXT = [".mp4", ".webm", ".mkv", ".mov", ".m4v"];
 
+function playableStat(file) {
+  if (!file) return null;
+  try {
+    if (!fs.existsSync(file) || !fs.statSync(file).isFile()) return null;
+    const st = fs.statSync(file);
+    if (st.size <= 0) return null;
+    return st;
+  } catch (_) { return null; }
+}
+
 function findPlayable(root, id, hintPath) {
   const vid = String(id || "").trim();
   if (!vid) return null;
@@ -217,18 +227,22 @@ function findPlayable(root, id, hintPath) {
   const catalogEntry = catalog[vid] || null;
 
   function fromVideo(file, forcedEntry) {
-    if (!file) return null;
-    try {
-      if (!fs.existsSync(file) || !fs.statSync(file).isFile()) return null;
-    } catch (_) { return null; }
-    const ext = path.extname(file).toLowerCase();
+    const st = playableStat(file);
+    if (!st) return null;
+    let probe = file;
+    let partial = false;
+    if (/\.part$/i.test(file)) {
+      partial = true;
+      probe = file.replace(/\.part$/i, "");
+    }
+    const ext = path.extname(probe).toLowerCase();
     if (VIDEO_EXT.indexOf(ext) < 0) return null;
-    const mapped = parseIndexPayload(readJson(sidecarPath(file)));
+    const mapped = parseIndexPayload(readJson(sidecarPath(probe)));
     const entry = forcedEntry || mapped[vid] || catalogEntry || Object.values(mapped)[0] || null;
-    return { file, entry, size: fs.statSync(file).size };
+    return { file, entry, size: st.size, partial };
   }
 
-  const hinted = fromVideo(hintPath, catalogEntry);
+  const hinted = fromVideo(hintPath, catalogEntry) || fromVideo(hintPath ? hintPath + ".part" : "", catalogEntry);
   if (hinted) return hinted;
 
   const files = [];
@@ -238,12 +252,49 @@ function findPlayable(root, id, hintPath) {
     if (!incoming[vid]) continue;
     const base = jf.toLowerCase().endsWith(".json") ? jf.slice(0, -5) : jf;
     for (let i = 0; i < VIDEO_EXT.length; i++) {
-      const hit = fromVideo(base + VIDEO_EXT[i], incoming[vid]);
+      const hit = fromVideo(base + VIDEO_EXT[i], incoming[vid]) || fromVideo(base + VIDEO_EXT[i] + ".part", incoming[vid]);
       if (hit) return hit;
     }
   }
-  if (catalogEntry) return { file: null, entry: catalogEntry, size: 0 };
+  const byName = findExistingById(root, vid);
+  if (byName) {
+    const hit = fromVideo(byName, catalogEntry);
+    if (hit) return hit;
+  }
+  if (catalogEntry) return { file: null, entry: catalogEntry, size: 0, partial: false };
   return null;
+}
+
+function findExistingById(root, id) {
+  const vid = String(id || "").trim();
+  if (!vid || !root) return "";
+  const needle = "[" + vid + "]";
+  function scanDir(dir) {
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { return ""; }
+    let part = "";
+    for (const e of entries) {
+      if (!e.isFile()) continue;
+      if (e.name.indexOf(needle) < 0) continue;
+      const full = path.join(dir, e.name);
+      if (/\.(mp4|webm|mov|mkv|m4v)$/i.test(e.name)) return full;
+      if (/\.(mp4|webm|mov|mkv|m4v)\.part$/i.test(e.name)) part = full;
+    }
+    return part;
+  }
+  try {
+    if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) return "";
+  } catch (_) { return ""; }
+  const hit = scanDir(root);
+  if (hit) return hit;
+  let entries;
+  try { entries = fs.readdirSync(root, { withFileTypes: true }); } catch (_) { return ""; }
+  for (const e of entries) {
+    if (!e.isDirectory() || e.name === "@eaDir" || e.name === "#recycle" || e.name === ".git") continue;
+    const found = scanDir(path.join(root, e.name));
+    if (found) return found;
+  }
+  return "";
 }
 
 function catalogPath(root) {

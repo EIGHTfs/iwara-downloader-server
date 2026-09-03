@@ -636,48 +636,79 @@ async function runDownloadLoop() {
 }
 
 // ---------- 控制 ----------
+function makeTaskItem(it, c, root) {
+  const authorDir = c.useAuthorSubdir ? sanitizeFileName(it.author || "unknown") : "";
+  const file = sanitizeFileName(it.file || `${it.id}.mp4`);
+  const savePath = authorDir
+    ? safeJoin(root, path.join(authorDir, file))
+    : safeJoin(root, file);
+  return {
+    id: it.id,
+    title: it.title || "",
+    author: it.author || "",
+    authorId: it.authorId || "",
+    file,
+    url: it.url || "",
+    savePath,
+    state: "pending",
+    progress: 0,
+    doneBytes: 0,
+    total: it.size || 0,
+    retries: 0,
+    error: ""
+  };
+}
+
 /** @param mods [{id, title, author}] */
 async function startDownloadTask(items) {
   const c = cfg.readConfig();
   const root = c.downloadPath;
   if (!root) throw new Error("请先在设置中配置下载路径");
 
-  const list = items.map((it) => {
-    const authorDir = c.useAuthorSubdir ? sanitizeFileName(it.author || "unknown") : "";
-    const file = sanitizeFileName(it.file || `${it.id}.mp4`);
-    const savePath = authorDir
-      ? safeJoin(root, path.join(authorDir, file))
-      : safeJoin(root, file);
-    return {
-      id: it.id,
-      title: it.title || "",
-      author: it.author || "",
-      authorId: it.authorId || "",
-      file,
-      url: it.url || "",
-      savePath,
-      state: "pending",
-      progress: 0,
-      doneBytes: 0,
-      total: it.size || 0,
-      retries: 0,
-      error: ""
-    };
-  });
+  // 【原代码】每次入队用新 list 整表替换 task.items，旧任务从进度页消失。【改为】用户原话「任务列表改成不会被自动移除，只能手动移除（不删除文件）」【思路】按 id 合并追加；进行中的不重置
+  if (!Array.isArray(task.items)) task.items = [];
+  let added = 0;
+  let resumed = 0;
+  for (const it of items) {
+    const id = String(it.id || "").trim();
+    if (!id) continue;
+    const exist = task.items.find((x) => x.id === id);
+    if (exist) {
+      if (exist.state === "done" || exist.state === "skipped" || exist.state === "submitted" || exist.state === "downloading") continue;
+      exist.state = "pending";
+      exist.retries = 0;
+      exist.error = "";
+      exist.progress = exist.progress || 0;
+      resumed++;
+      continue;
+    }
+    task.items.push(makeTaskItem(it, c, root));
+    added++;
+  }
 
-  task = {
-    status: "running",
-    items: list,
-    idx: 0,
-    completed: 0,
-    failed: 0,
-    totalBytes: list.reduce((s, i) => s + (i.total || 0), 0),
-    doneBytes: 0,
-    backend: c.downloadBackend
-  };
+  task.backend = c.downloadBackend;
+  task.totalBytes = task.items.reduce((s, i) => s + (i.total || 0), 0);
+  if (task.status !== "running") {
+    task.status = "running";
+    task.idx = 0;
+    saveTask();
+    runDownloadLoop().catch((e) => console.error("[downloader] loop error:", e));
+  } else {
+    saveTask();
+  }
+  return { ok: true, total: task.items.length, added, resumed };
+}
+
+function removeItem(id) {
+  // 只从任务列表拿掉，不删磁盘上的视频 / .part / 索引
+  const vid = String(id || "").trim();
+  const before = (task.items || []).length;
+  task.items = (task.items || []).filter((it) => it.id !== vid);
+  const removed = before - task.items.length;
+  task.completed = (task.items || []).filter((it) => it.state === "done" || it.state === "skipped" || it.state === "submitted").length;
+  task.failed = (task.items || []).filter((it) => it.state === "failed" || it.state === "error").length;
   saveTask();
-  runDownloadLoop().catch((e) => console.error("[downloader] loop error:", e));
-  return { ok: true, total: list.length };
+  return { ok: true, removed, remaining: task.items.length };
 }
 
 function pauseTask() {
@@ -753,7 +784,7 @@ cdnLoadState();
 
 module.exports = {
   getTask, restorePendingTask,
-  startDownloadTask, pauseTask, resumeTask, stopTask, setConcurrency, retryFailed, removeCompleted,
+  startDownloadTask, pauseTask, resumeTask, stopTask, setConcurrency, retryFailed, removeCompleted, removeItem,
   sanitizeFileName, fmtSize,
   aria2AddIndexJson
 };

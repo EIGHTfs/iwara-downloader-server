@@ -88,8 +88,11 @@ try {
       $("#extra").textContent = extra.join(" · ");
       const v = $("#player");
       if (j.fileId) v.poster = "/api/thumb?file=" + encodeURIComponent(j.fileId) + "&n=0";
-      if (j.hasFile) v.src = "/api/play?id=" + encodeURIComponent(id);
-      else $("#err").textContent = "索引有元数据，但本机还没有视频文件（可能还在下，或 Aria2 在另一台机器）。";
+      if (j.hasFile) {
+        v.src = "/api/play?id=" + encodeURIComponent(id);
+        v.preload = "auto";
+        if (j.partial) $("#err").textContent = "正在边下边播：只能看到已写入的部分，稍后刷新可看更多。";
+      } else $("#err").textContent = "索引有元数据，但本机还没有可播字节（可能刚开始下，或 Aria2 在另一台机器）。";
     })
     .catch((e) => {
       $("#title").textContent = "无法播放";

@@ -52,28 +52,43 @@ let CLI_PORT = null;
 }
 
 // ---------- 工具 ----------
-function streamLocalVideo(req, res, filePath) {
+function streamLocalVideo(req, res, filePath, opts) {
   let st;
   try { st = fs.statSync(filePath); } catch (_) { res.writeHead(404); res.end("Not Found"); return; }
-  const ext = path.extname(filePath).toLowerCase();
-  const type = MIME[ext] || "application/octet-stream";
-  const total = st.size;
+  const probe = String(filePath).replace(/\.part$/i, "");
+  const ext = path.extname(probe).toLowerCase();
+  const type = MIME[ext] || "video/mp4";
+  const available = st.size;
+  const expected = Number(opts && opts.expected) > available ? Number(opts.expected) : available;
+  const partial = !!(opts && opts.partial) || /\.part$/i.test(filePath);
+  // 边下边播：浏览器按完整时长 seek；未写入的区间回 206 已有字节，避免 416 直接播不了
   const range = String(req.headers.range || "");
   const m = /^bytes=(\d*)-(\d*)$/.exec(range);
   if (m) {
     const start = m[1] ? parseInt(m[1], 10) : 0;
-    const end = m[2] ? parseInt(m[2], 10) : total - 1;
-    if (start >= total || end >= total || start > end) {
-      res.writeHead(416, { "Content-Range": "bytes */" + total });
+    if (start >= available) {
+      res.writeHead(416, {
+        "Content-Range": "bytes */" + expected,
+        "Accept-Ranges": "bytes",
+        "Cache-Control": "no-store"
+      });
+      res.end();
+      return;
+    }
+    let end = m[2] ? parseInt(m[2], 10) : available - 1;
+    if (end >= available) end = available - 1;
+    if (start > end) {
+      res.writeHead(416, { "Content-Range": "bytes */" + expected });
       res.end();
       return;
     }
     res.writeHead(206, {
       "Content-Type": type,
-      "Content-Range": "bytes " + start + "-" + end + "/" + total,
+      "Content-Range": "bytes " + start + "-" + end + "/" + expected,
       "Accept-Ranges": "bytes",
       "Content-Length": end - start + 1,
-      "Cache-Control": "no-store"
+      "Cache-Control": "no-store",
+      "X-Playback-Partial": partial ? "1" : "0"
     });
     fs.createReadStream(filePath, { start, end }).pipe(res);
     return;
@@ -81,10 +96,22 @@ function streamLocalVideo(req, res, filePath) {
   res.writeHead(200, {
     "Content-Type": type,
     "Accept-Ranges": "bytes",
-    "Content-Length": total,
-    "Cache-Control": "no-store"
+    "Content-Length": available,
+    "Cache-Control": "no-store",
+    "X-Playback-Partial": partial ? "1" : "0"
   });
   fs.createReadStream(filePath).pipe(res);
+}
+
+function playHint(id) {
+  const it = ((downloader.getTask().items || []).find((x) => x.id === id)) || {};
+  return {
+    savePath: it.savePath || "",
+    expected: it.total || 0,
+    title: it.title || "",
+    author: it.author || "",
+    file: it.file || ""
+  };
 }
 
 function sendJson(res, status, obj) {
@@ -532,32 +559,35 @@ const server = http.createServer(async (req, res) => {
       const id = String(parsed.query.id || "").trim();
       if (!id) return sendJson(res, 400, { ok: false, error: "缺 id" });
       const c = cfg.readConfig();
-      const hint = ((downloader.getTask().items || []).find((it) => it.id === id) || {}).savePath;
-      const found = videoIndex.findPlayable(c.downloadPath, id, hint);
-      if (!found) return sendJson(res, 404, { ok: false, error: "索引里没有这个视频" });
-      const e = found.entry || {};
+      const hint = playHint(id);
+      const found = videoIndex.findPlayable(c.downloadPath, id, hint.savePath);
+      if (!found && !hint.savePath) return sendJson(res, 404, { ok: false, error: "索引里没有这个视频" });
+      const e = (found && found.entry) || {};
+      const size = (found && found.size) || 0;
       return sendJson(res, 200, {
         ok: true,
         id,
-        hasFile: !!found.file,
-        name: e.name || "",
+        hasFile: !!(found && found.file) || size > 0,
+        partial: !!(found && found.partial),
+        name: e.name || hint.author || "",
         username: e.username || "",
-        title: e.title || id,
+        title: e.title || hint.title || hint.file || id,
         fileId: e.fileId || "",
         duration: e.duration || 0,
         tags: e.tags || [],
         createdAt: e.createdAt || "",
-        size: found.size || 0
+        size,
+        expected: hint.expected || size
       });
     }
     if (method === "GET" && pathname === "/api/play") {
       const id = String(parsed.query.id || "").trim();
       if (!id) return sendJson(res, 400, { ok: false, error: "缺 id" });
       const c = cfg.readConfig();
-      const hint = ((downloader.getTask().items || []).find((it) => it.id === id) || {}).savePath;
-      const found = videoIndex.findPlayable(c.downloadPath, id, hint);
-      if (!found || !found.file) return sendJson(res, 404, { ok: false, error: "本地没有视频文件" });
-      return streamLocalVideo(req, res, found.file);
+      const hint = playHint(id);
+      const found = videoIndex.findPlayable(c.downloadPath, id, hint.savePath);
+      if (!found || !found.file) return sendJson(res, 404, { ok: false, error: "本地没有视频文件（还没下到可播的字节）" });
+      return streamLocalVideo(req, res, found.file, { expected: hint.expected || found.size, partial: found.partial });
     }
     if (method === "GET" && pathname === "/api/index/export") {
       const c = cfg.readConfig();
@@ -634,6 +664,12 @@ const server = http.createServer(async (req, res) => {
     // 2026-09-03：并发只在设置页改（POST /api/settings）；进度页不再调 /api/task/concurrency
     if (method === "POST" && pathname === "/api/task/remove-completed") {
       return sendJson(res, 200, downloader.removeCompleted());
+    }
+    if (method === "POST" && pathname === "/api/task/remove-item") {
+      const body = await readBody(req);
+      const id = String((body && body.id) || parsed.query.id || "").trim();
+      if (!id) return sendJson(res, 400, { ok: false, error: "缺 id" });
+      return sendJson(res, 200, downloader.removeItem(id));
     }
 
     // ---- 静态 ----

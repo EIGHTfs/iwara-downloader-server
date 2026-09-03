@@ -156,7 +156,20 @@ function bindProgress() {
   if (rmBtn) {
     rmBtn.addEventListener("click", async () => {
       const r = await api("/api/task/remove-completed", "POST", {});
-      if (r && r.ok) showFeedback("已移除 " + (r.removed || 0) + " 个完成项", "ok");
+      if (r && r.ok) showFeedback("已从列表移除 " + (r.removed || 0) + " 项（文件仍在）", "ok");
+      else showFeedback((r && r.error) || "移除失败", "err");
+    });
+  }
+  const list = $("#taskList");
+  if (list && !list._rmBound) {
+    list._rmBound = true;
+    list.addEventListener("click", async (ev) => {
+      const btn = ev.target && ev.target.closest && ev.target.closest("button.rm-item");
+      if (!btn) return;
+      const id = btn.getAttribute("data-id");
+      if (!id) return;
+      const r = await api("/api/task/remove-item", "POST", { id });
+      if (r && r.ok) showFeedback("已从列表移除（文件仍在）", "ok");
       else showFeedback((r && r.error) || "移除失败", "err");
     });
   }
@@ -229,10 +242,14 @@ function renderTask(task) {
     const displayName = it.file || it.title || it.id;
     const meta = [it.title && it.title !== displayName ? it.title : "", it.author, speedStr, it.error].filter(Boolean).join(" · ");
     const play = it.id
-      ? `<a class="play-btn" href="/play.html?id=${encodeURIComponent(it.id)}" target="_blank" rel="noopener" title="本地播放">▶</a>`
+      ? `<a class="play-btn" href="/play.html?id=${encodeURIComponent(it.id)}" target="_blank" rel="noopener" title="本地播放（未下完也可播已缓存部分）">▶</a>`
+      : "";
+    const rm = it.id
+      ? `<button type="button" class="rm-item" data-id="${esc(it.id)}" title="从列表移除（不删文件）">×</button>`
       : "";
     const row = `<div class="item ${cls}">
       ${play}
+      ${rm}
       <span class="icon">${icon}</span>
       <span class="item-name">${esc(displayName)}
         <span class="row-bar ${barCls}"><span class="row-bar-fill" style="width:${p}%"></span></span>
