@@ -33,7 +33,12 @@ const MIME = {
   ".webm": "video/webm",
   ".mkv": "video/x-matroska",
   ".mov": "video/quicktime",
-  ".m4v": "video/mp4"
+  ".m4v": "video/mp4",
+  ".m3u8": "application/vnd.apple.mpegurl",
+  ".m3u": "application/vnd.apple.mpegurl",
+  ".ts": "video/mp2t",
+  ".flv": "video/x-flv",
+  ".mpd": "application/dash+xml"
 };
 
 // ---------- 命令行：设置密码 / 端口 ----------
@@ -52,6 +57,9 @@ let CLI_PORT = null;
 }
 
 // ---------- 工具 ----------
+// 本地 Range 播放。用户原话：「没下载完的part文件我希望也能部分播放」
+// AI 思路：未下完时 Content-Range 的 total 必须是已写入字节，不能报预计完整体积。
+// 浏览器一旦以为文件已经那么大，就会 seek 到尾巴拿 416，进度条看起来能拖、实际播不了。
 function streamLocalVideo(req, res, filePath, opts) {
   let st;
   try { st = fs.statSync(filePath); } catch (_) { res.writeHead(404); res.end("Not Found"); return; }
@@ -59,37 +67,36 @@ function streamLocalVideo(req, res, filePath, opts) {
   const ext = path.extname(probe).toLowerCase();
   const type = MIME[ext] || "video/mp4";
   const available = st.size;
-  const expected = Number(opts && opts.expected) > available ? Number(opts.expected) : available;
-  const partial = !!(opts && opts.partial) || /\.part$/i.test(filePath);
-  // 边下边播：浏览器按完整时长 seek；未写入的区间回 206 已有字节，避免 416 直接播不了
+  const wanted = Number(opts && opts.expected) || 0;
+  const namedPart = /\.part$/i.test(filePath);
+  const growing = wanted > 0 && available > 0 && available < wanted;
+  const partial = !!(opts && opts.partial) || namedPart || growing;
+  // 【原代码】expected = 预计总大小，Range total 用 expected；start>=available 回 416
+  // 【改为】partial 时 total=available；seek 超出已写入区间则夹到末尾已有字节
+  const total = partial ? available : (wanted > available ? wanted : available);
   const range = String(req.headers.range || "");
   const m = /^bytes=(\d*)-(\d*)$/.exec(range);
   if (m) {
-    const start = m[1] ? parseInt(m[1], 10) : 0;
+    let start = m[1] ? parseInt(m[1], 10) : 0;
+    if (available <= 0) {
+      res.writeHead(404); res.end("Not Found"); return;
+    }
     if (start >= available) {
-      res.writeHead(416, {
-        "Content-Range": "bytes */" + expected,
-        "Accept-Ranges": "bytes",
-        "Cache-Control": "no-store"
-      });
-      res.end();
-      return;
+      const keep = Math.min(available, 256 * 1024);
+      start = Math.max(0, available - keep);
     }
     let end = m[2] ? parseInt(m[2], 10) : available - 1;
     if (end >= available) end = available - 1;
-    if (start > end) {
-      res.writeHead(416, { "Content-Range": "bytes */" + expected });
-      res.end();
-      return;
-    }
+    if (start > end) start = 0;
     res.writeHead(206, {
       "Content-Type": type,
-      "Content-Range": "bytes " + start + "-" + end + "/" + expected,
+      "Content-Range": "bytes " + start + "-" + end + "/" + total,
       "Accept-Ranges": "bytes",
       "Content-Length": end - start + 1,
       "Cache-Control": "no-store",
       "X-Playback-Partial": partial ? "1" : "0"
     });
+    if (req.method === "HEAD") { res.end(); return; }
     fs.createReadStream(filePath, { start, end }).pipe(res);
     return;
   }
@@ -100,6 +107,7 @@ function streamLocalVideo(req, res, filePath, opts) {
     "Cache-Control": "no-store",
     "X-Playback-Partial": partial ? "1" : "0"
   });
+  if (req.method === "HEAD") { res.end(); return; }
   fs.createReadStream(filePath).pipe(res);
 }
 
@@ -220,6 +228,7 @@ function serveStatic(req, res, pathname) {
     if (ext === ".html" || ext === ".js" || ext === ".css") headers["Cache-Control"] = "no-cache, no-store, must-revalidate";
     if (ext === ".ico" || ext === ".png") headers["Cache-Control"] = "public, max-age=86400";
     res.writeHead(200, headers);
+    if (req.method === "HEAD") { res.end(); return; }
     fs.createReadStream(filePath).pipe(res);
   });
 }
@@ -564,11 +573,16 @@ const server = http.createServer(async (req, res) => {
       if (!found && !hint.savePath) return sendJson(res, 404, { ok: false, error: "索引里没有这个视频" });
       const e = (found && found.entry) || {};
       const size = (found && found.size) || 0;
+      const expected = hint.expected || size;
+      // 用户原话：「没下载完的part文件我希望也能部分播放」
+      // AI 思路：.part、或 aria2 正在往最终文件名写（size<total）都算 partial；有字节就能播
+      const growing = expected > 0 && size > 0 && size < expected;
+      const partial = !!(found && found.partial) || growing;
       return sendJson(res, 200, {
         ok: true,
         id,
-        hasFile: !!(found && found.file) || size > 0,
-        partial: !!(found && found.partial),
+        hasFile: !!(found && found.file) && size > 0,
+        partial,
         name: e.name || hint.author || "",
         username: e.username || "",
         title: e.title || hint.title || hint.file || id,
@@ -577,17 +591,20 @@ const server = http.createServer(async (req, res) => {
         tags: e.tags || [],
         createdAt: e.createdAt || "",
         size,
-        expected: hint.expected || size
+        expected,
+        ext: found && found.file ? path.extname(String(found.file).replace(/\.part$/i, "")).toLowerCase() : ""
       });
     }
-    if (method === "GET" && pathname === "/api/play") {
+    if ((method === "GET" || method === "HEAD") && pathname === "/api/play") {
       const id = String(parsed.query.id || "").trim();
       if (!id) return sendJson(res, 400, { ok: false, error: "缺 id" });
       const c = cfg.readConfig();
       const hint = playHint(id);
       const found = videoIndex.findPlayable(c.downloadPath, id, hint.savePath);
       if (!found || !found.file) return sendJson(res, 404, { ok: false, error: "本地没有视频文件（还没下到可播的字节）" });
-      return streamLocalVideo(req, res, found.file, { expected: hint.expected || found.size, partial: found.partial });
+      const expected = hint.expected || found.size;
+      const growing = expected > 0 && found.size > 0 && found.size < expected;
+      return streamLocalVideo(req, res, found.file, { expected, partial: found.partial || growing });
     }
     if (method === "GET" && pathname === "/api/index/export") {
       const c = cfg.readConfig();
@@ -673,7 +690,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     // ---- 静态 ----
-    if (method === "GET") return serveStatic(req, res, pathname);
+    if (method === "GET" || method === "HEAD") return serveStatic(req, res, pathname);
     return sendJson(res, 405, { ok: false, error: "方法不允许" });
   } catch (e) {
     return sendJson(res, 500, { ok: false, error: String(e.message || e) });

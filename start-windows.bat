@@ -34,7 +34,7 @@ for /f "delims=" %%i in ('%NODE_BIN% -e "try{const c=require(process.argv[1]);co
 
 rem ---------- 特殊：--set-password ----------
 if "%~1"=="--set-password" (
-  %NODE_BIN% server\app.js --set-password "%~2"
+  %NODE_BIN% server\boot.cjs --set-password "%~2"
   echo [OK] 密码已设置
   pause
   exit /b 0
@@ -97,7 +97,7 @@ rem ============================================================
   if not exist server mkdir server
   echo [START] 启动 iwara-downloader-server ...（端口 %PORT%）
   rem 用 cmd 包装重定向追加日志；PowerShell 拿 cmd PID
-  for /f %%i in ('powershell -NoProfile -Command "$p=Start-Process -FilePath 'cmd.exe' -ArgumentList '/c','set PORT=%PORT% && %NODE_BIN% server\app.js >> server\server.log 2>&1' -WindowStyle Hidden -PassThru; $p.Id"') do set PID=%%i
+  for /f %%i in ('powershell -NoProfile -Command "$p=Start-Process -FilePath 'cmd.exe' -ArgumentList '/c','set PORT=%PORT% && %NODE_BIN% server\boot.cjs >> server\server.log 2>&1' -WindowStyle Hidden -PassThru; $p.Id"') do set PID=%%i
   echo %PID%> "%PID_FILE%"
   echo [OK] 服务已启动 PID=%PID%
   echo [OK] 访问 http://127.0.0.1:%PORT%

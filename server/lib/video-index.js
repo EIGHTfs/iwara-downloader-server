@@ -208,7 +208,7 @@ function sidecarPath(videoPath) {
   return base + ".json";
 }
 
-const VIDEO_EXT = [".mp4", ".webm", ".mkv", ".mov", ".m4v"];
+const VIDEO_EXT = [".mp4", ".webm", ".mkv", ".mov", ".m4v", ".m3u8", ".m3u", ".ts", ".flv", ".mpd"];
 
 function playableStat(file) {
   if (!file) return null;
@@ -278,7 +278,9 @@ function findExistingById(root, id) {
       if (e.name.indexOf(needle) < 0) continue;
       const full = path.join(dir, e.name);
       if (/\.(mp4|webm|mov|mkv|m4v)$/i.test(e.name)) return full;
-      if (/\.(mp4|webm|mov|mkv|m4v)\.part$/i.test(e.name)) part = full;
+      // 用户原话：「没下载完的part文件我希望也能部分播放」
+      // AI 思路：按 id 扫目录时完整文件优先；没有完整文件才回 .part（含 m3u8/flv 等扩展）
+      if (/\.(mp4|webm|mov|mkv|m4v|m3u8|m3u|ts|flv|mpd)\.part$/i.test(e.name)) part = full;
     }
     return part;
   }

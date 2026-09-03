@@ -70,7 +70,8 @@ start_server() {
   fi
 
   cd "$SERVER_DIR" || exit 1
-  local cmd=("$NODE_BIN" app.js)
+  # 用户原话：「这个项目不需要packagejson文件」——用 boot.cjs 强制 CJS，不写 package.json
+  local cmd=("$NODE_BIN" boot.cjs)
   if [ -n "$port_opt" ]; then cmd+=("--port" "$port_opt"); fi
   if command -v setsid >/dev/null 2>&1; then
     setsid nohup "${cmd[@]}" > "$LOG_FILE" 2>&1 < /dev/null &
@@ -124,10 +125,11 @@ stop_server() {
     fi
     rm -f "$PID_FILE"
   fi
-  # 2) 兜底：按命令行匹配（字符类 `[.]`/`[t]` 防止杀掉本脚本自身）
-  if pgrep -f 'server/app[.]js --por[t]' > /dev/null 2>&1; then
+  # 2) 兜底：只匹配 node boot.cjs（字符类防杀掉本脚本；排除 grep 自身）
+  extra="$(pgrep -f '[n]ode .*boot[.]cjs' 2>/dev/null || true)"
+  if [ -n "$extra" ]; then
     echo "兜底清理残留进程..."
-    pkill -f 'server/app[.]js --por[t]' 2>/dev/null || true
+    echo "$extra" | xargs -r kill 2>/dev/null || true
     stopped=1
   fi
 
@@ -157,8 +159,16 @@ status_server() {
     echo "进程:   ❌ 未运行（无 PID 文件）"
   fi
 
-  if pgrep -f 'server/app[.]js --por[t]' > /dev/null 2>&1; then
-    echo "进程:   ⚠️  发现未记录在 PID 文件的进程: $(pgrep -f 'server/app[.]js --por[t]' | tr '\n' ' ')"
+  extra="$(pgrep -f '[n]ode .*boot[.]cjs' 2>/dev/null || true)"
+  if [ -n "$extra" ]; then
+    extra_other=""
+    for p in $extra; do
+      if [ "$p" != "${PID:-}" ]; then extra_other="$extra_other $p"; fi
+    done
+    extra_other="$(echo "$extra_other" | xargs)"
+    if [ -n "$extra_other" ]; then
+      echo "进程:   ⚠️  发现未记录在 PID 文件的进程: $extra_other"
+    fi
   fi
 
   if curl -sf -m 5 "http://127.0.0.1:$port/api/status" > /dev/null 2>&1; then
@@ -179,7 +189,7 @@ if [ "${1:-}" = "--set-password" ]; then
     echo "❌ 请提供新密码: --set-password \"新密码\""
     exit 1
   fi
-  "$NODE_BIN" "$SERVER_DIR/app.js" --set-password "$2"
+  "$NODE_BIN" "$SERVER_DIR/boot.cjs" --set-password "$2"
   echo "✓ 密码已设置"
   exit 0
 fi
