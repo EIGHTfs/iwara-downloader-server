@@ -1,56 +1,41 @@
-# 敏感/运行态数据
+# 运行态（不入库）
 server/config.json
-server/*.log
+server/sessions.json
 server/download_task.json
 server/search_cache.json
 server/search_task.json
 server/cdn_hosts_state.json
 server/following_cache.json
 server/iwara-index.json
-server/sessions.json
 server/app.pid
+server/*.log
 server/*.bak-*
 *.pid
 *.log
 *.bak
 
-# 下载的视频文件
+# 下载产物
 *.mp4
 *.webm
 *.mkv
+*.mov
+*.m4v
+*.flv
 *.part
+*.aria2
 
-# 本地 GitHub 推送凭据（仅本机，绝不上库）——由 scripts/git-push.sh 读取
+# 本机凭据
 .git-push-token
 .git-credentials-local
 .github-credentials
 git_push_token.txt
 
-# 项目自带 Node 运行时（官方 linux-x64，体积大，不入库）
+# 自带 Node 运行时
 tool/node/
 tool/node-*.tar.xz
 
-# 环境与构建
-node_modules/
-dist/
-build/
-release/
-
-# 群晖 @eaDir 元数据
-@eaDir/
-**/@eaDir/
-*.@SynoEAStream
-
-# 编辑器 / 系统
-.DS_Store
-Thumbs.db
-.idea/
-.vscode/
-*.swp
-*~
-# 零依赖项目禁止 package.json（用户原话：这个项目不需要 packagejson 文件）
+# 零依赖：不写 package.json / lock
 package.json
-# npm 下载产物（dsh-git-push 自动追加，2026-08-20）
 package-lock.json
 yarn.lock
 pnpm-lock.yaml
@@ -58,6 +43,22 @@ bun.lock
 npm-debug.log*
 .npm/
 .pnpm-store/
-# 开发者文档 / 内部转达稿（含设备路径或会话交接，不进公开库）
+node_modules/
+dist/
+build/
+release/
+
+# 群晖 / 编辑器
+@eaDir/
+**/@eaDir/
+*.@SynoEAStream
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~
+
+# 内部稿
 docs/iwara-downloader-server-开发者文档-20260901.md
 handoff-ui-template.html

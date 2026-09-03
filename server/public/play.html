@@ -35,10 +35,18 @@ try {
   background: #000;
   border-radius: 10px;
   overflow: hidden;
-  flex: 1;
-  min-height: 240px;
+  flex: 1 1 auto;
+  min-height: 360px;
+  position: relative;
 }
-.player-stage .art-video-player { width: 100%; height: 100%; }
+.player-stage #player,
+.player-stage .art-video-player,
+.player-stage .art-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
 .player-meta {
   margin-top: 12px;
   padding: 12px 16px;
@@ -104,7 +112,7 @@ try {
 .loading-more:hover { color: var(--primary); }
 @media (max-width: 900px) {
   .player-page { flex-direction: column; height: auto; overflow: auto; }
-  .player-stage { min-height: 250px; height: 56vw; }
+  .player-stage { min-height: 250px; height: 56vw; position: relative; }
   .player-sidebar { width: 100%; max-height: 320px; }
 }
 </style>
@@ -206,11 +214,15 @@ try {
     art = new Artplayer({
       container: "#player",
       url: "/api/play?id=" + encodeURIComponent(id),
+      type: (info.ext || "").replace(/^\./, "") || "mp4",
       poster: poster || "",
       theme: themeColor(),
       lang: "zh-cn",
       volume: 0.7,
       autoplay: true,
+      muted: false,
+      autoSize: false,
+      autoMini: false,
       playbackRate: true,
       aspectRatio: true,
       screenshot: true,
