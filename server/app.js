@@ -690,6 +690,16 @@ const server = http.createServer(async (req, res) => {
     }
 
     // ---- 静态 ----
+    // play.html / 首页与 /api/play 同一套 session cookie（Path=/，同源 sa6400.local:28463）
+    // 未登录先 302 到登录页并带回当前地址；已登录直接出页面，不再等前端 401
+    if ((method === "GET" || method === "HEAD") && (pathname === "/" || pathname === "/index.html" || pathname === "/play.html")) {
+      if (!requireAuth(req)) {
+        const next = (pathname === "/index.html" ? "/" : pathname) + (parsed.search || "");
+        res.writeHead(302, { Location: "/login.html?next=" + encodeURIComponent(next || "/") });
+        res.end();
+        return;
+      }
+    }
     if (method === "GET" || method === "HEAD") return serveStatic(req, res, pathname);
     return sendJson(res, 405, { ok: false, error: "方法不允许" });
   } catch (e) {
