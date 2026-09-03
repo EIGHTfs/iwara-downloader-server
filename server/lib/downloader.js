@@ -360,7 +360,11 @@ function aria2Rpc(method, params) {
         res.on("end", () => {
           try {
             const j = JSON.parse(d);
-            if (j.error) return reject(new Error((j.error.message) || `aria2 错误 code=${j.error.code}`));
+            if (j.error) {
+              const err = new Error((j.error.message) || ("aria2 错误 code=" + j.error.code));
+              err.aria2Code = j.error.code;
+              return reject(err);
+            }
             resolve(j.result);
           } catch (e) {
             reject(new Error("aria2 返回非 JSON: " + String(d).slice(0, 120)));
@@ -433,61 +437,20 @@ function aria2IsVideoName(name) {
   return /\.(mp4|webm|mov|mkv)$/i.test(String(name || ""));
 }
 
-function aria2StatusHasId(st, id, fileName) {
-  // sidecar JSON 文件名也带 [id]，不能当成视频已下完
-  const vid = String(id || "");
-  const needle = vid ? "[" + vid + "]" : "";
-  const name = aria2FileName(st);
-  if (!aria2IsVideoName(name)) return false;
-  if (needle && name && name.indexOf(needle) >= 0) return true;
-  if (fileName && name && name === sanitizeFileName(fileName)) return true;
-  const uris = ((st && st.files && st.files[0] && st.files[0].uris) || []).map((u) => String(u.uri || ""));
-  if (vid && uris.some((u) => u.indexOf("/api/index-sidecar") < 0 && u.indexOf(vid) >= 0)) return true;
-  return false;
-}
-
-async function aria2TellList(method) {
-  try {
-    const keys = ["gid", "status", "files", "totalLength", "completedLength", "errorCode", "errorMessage"];
-    // tellActive 只有 keys；tellWaiting/tellStopped 才是 offset, num, keys
-    const params = method === "aria2.tellActive" ? [keys] : [0, 1000, keys];
-    const r = await aria2Rpc(method, params);
-    return Array.isArray(r) ? r : [];
-  } catch (e) {
-    console.error("[downloader] " + method + " 失败:", e && e.message || e);
-    return [];
-  }
-}
-
-/** 活动 / 等待 / 真正下完 里已有同视频 → 视为已下过。失败不算。 */
-async function aria2AlreadyHas(id, fileName) {
-  // 2026-09-04：失败任务不能当已下载。
-  // 【原代码】tellActive + tellWaiting + tellStopped 任一命中就 return true。
-  // 【改为】用户原话「Aria2 已有此文件，跳过。错误的，因为aria2实际下载失败了你也算下载过了，Failed to connect to the host 2001::a27d:108, cause: Network is unreac」
-  // 【思路】tellStopped 含 complete 和 error。error（IPv6 不通、403）也匹配文件名就被跳过。
-  //   只认 active/waiting，或 stopped 且 status=complete 且 completedLength>0。
-  const [active, waiting, stopped] = await Promise.all([
-    aria2TellList("aria2.tellActive"),
-    aria2TellList("aria2.tellWaiting"),
-    aria2TellList("aria2.tellStopped")
-  ]);
-  for (const st of active.concat(waiting)) {
-    if (aria2StatusHasId(st, id, fileName)) return true;
-  }
-  for (const st of stopped) {
-    if (!aria2StatusHasId(st, id, fileName)) continue;
-    const status = String(st.status || "");
-    const done = parseInt(st.completedLength, 10) || 0;
-    if (status === "complete" && done > 0) return true;
-  }
-  return false;
-}
-
 function markSkipped(item, reason) {
+  if (!item || item.state === "skipped" || item.state === "done") return;
   item.state = "skipped";
   item.progress = 100;
   item.error = reason || "已下载，跳过";
   task.completed++;
+}
+
+// aria2 原生重复：11 同时下同一 HTTP(S)，12 同时下同一 BT，13 目标文件已存在（--allow-overwrite=false）
+function isAria2Duplicate(code, message) {
+  const n = Number(code);
+  if (n === 11 || n === 12 || n === 13) return true;
+  const m = String(message || "");
+  return /\b(11|12|13)\b/.test(m) && /same file|already|exist/i.test(m);
 }
 
 function localFileExists(savePath) {
@@ -496,38 +459,6 @@ function localFileExists(savePath) {
   } catch (_) {
     return false;
   }
-}
-
-/** 下载根目录（及一层作者子目录）里文件名含 [视频id] 的非空视频 → 视为已下过（不靠索引）。 */
-function findExistingVideoFile(root, id) {
-  const vid = String(id || "").trim();
-  if (!vid || !root) return "";
-  const needle = "[" + vid + "]";
-  function scanDir(dir) {
-    let entries;
-    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { return ""; }
-    for (const e of entries) {
-      if (!e.isFile()) continue;
-      if (e.name.indexOf(needle) < 0 || !/\.(mp4|webm|mov|mkv)$/i.test(e.name)) continue;
-      const full = path.join(dir, e.name);
-      try { if (fs.statSync(full).size > 0) return full; } catch (_) {}
-    }
-    return "";
-  }
-  try {
-    if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) return "";
-  } catch (_) { return ""; }
-  const hit = scanDir(root);
-  if (hit) return hit;
-  // 作者子目录只扫一层，避免把整个共享盘走一遍
-  let entries;
-  try { entries = fs.readdirSync(root, { withFileTypes: true }); } catch (_) { return ""; }
-  for (const e of entries) {
-    if (!e.isDirectory() || e.name === "@eaDir" || e.name === "#recycle" || e.name === ".git") continue;
-    const found = scanDir(path.join(root, e.name));
-    if (found) return found;
-  }
-  return "";
 }
 
 /** aria2 后端：addUri 推送（支持 http/https；DSM 自签名证书忽略校验） */
@@ -589,8 +520,12 @@ function applyAria2Status(item, st) {
     item.progress = 100;
     item.error = "";
   } else if (status === "error") {
-    item.state = "failed";
-    item.error = st.errorMessage || "aria2 error";
+    if (isAria2Duplicate(st.errorCode, st.errorMessage)) {
+      markSkipped(item, "Aria2 重复（" + String(st.errorCode || "") + "）");
+    } else {
+      item.state = "failed";
+      item.error = st.errorMessage || "aria2 error";
+    }
   } else if (status === "paused") {
     item.state = "paused";
   } else if (item.state !== "done" && item.state !== "failed") {
@@ -823,19 +758,6 @@ async function processOneItem(item) {
     item.state = "downloading";
     saveTask();
 
-    const existing = findExistingVideoFile(c.downloadPath, item.id);
-    if (existing) {
-      item.file = path.basename(existing);
-      item.savePath = existing;
-      if (!item.title || item.title === item.id) item.title = item.file.replace(/\.(mp4|webm|mov|mkv)$/i, "");
-      markSkipped(item, "文件已存在，跳过");
-      thumbCache.ensureThumb(item.id, { filePath: existing }).catch(() => null);
-      return;
-    }
-    if (c.downloadBackend === "aria2" && await aria2AlreadyHas(item.id, item.file)) {
-      markSkipped(item, "Aria2 已有此文件，跳过");
-      return;
-    }
     if (c.downloadBackend === "aria2") {
       const info = await api.getVideoInfo(item.id);
       applyParsedName(item, info, c);
@@ -843,18 +765,22 @@ async function processOneItem(item) {
       if (info.file && info.file.size) item.total = info.file.size;
       if (!item.url) throw new Error("无法获取下载链接: " + (info.error || "未知"));
       await api.autoLikeFollow(info);
-      if (await aria2AlreadyHas(item.id, item.file)) {
-        markSkipped(item, "Aria2 已有此文件，跳过");
-        return;
-      }
       const toggles = cfg.normalizeDownloadToggles(c.downloadToggles);
       if (toggles.video) {
-        const gid = await aria2Add(item);
-        item.aria2Gid = gid;
-        item.state = "downloading";
-        item.progress = 0;
-        item.error = "";
-        ensureAria2Monitor();
+        try {
+          const gid = await aria2Add(item);
+          item.aria2Gid = gid;
+          item.state = "downloading";
+          item.progress = 0;
+          item.error = "";
+          ensureAria2Monitor();
+        } catch (e) {
+          if (isAria2Duplicate(e && e.aria2Code, e && e.message)) {
+            markSkipped(item, "Aria2 重复任务，跳过");
+            return;
+          }
+          throw e;
+        }
       } else {
         item.error = "已跳过视频（设置未勾选）";
         item.state = "skipped";
