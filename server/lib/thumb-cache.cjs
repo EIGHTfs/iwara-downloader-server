@@ -67,19 +67,6 @@ function readThumb(id) {
   } catch (_) { return null; }
 }
 
-function srcPath(id) {
-  const p = thumbPath(id);
-  return p ? p + ".src" : "";
-}
-
-function thumbOrigin(id) {
-  try {
-    const p = srcPath(id);
-    if (!p || !fs.existsSync(p)) return hasThumb(id) ? "unknown" : "";
-    return String(fs.readFileSync(p, "utf8")).trim();
-  } catch (_) { return hasThumb(id) ? "unknown" : ""; }
-}
-
 function writeThumb(id, buf, origin) {
   const p = thumbPath(id);
   if (!p || !buf || !buf.length) return null;
@@ -88,10 +75,6 @@ function writeThumb(id, buf, origin) {
   const tmp = p + ".part";
   fs.writeFileSync(tmp, buf);
   fs.renameSync(tmp, p);
-  const src = srcPath(id);
-  if (src && origin) {
-    try { fs.writeFileSync(src, String(origin)); } catch (_) {}
-  }
   return p;
 }
 
@@ -144,7 +127,6 @@ function extractFrame(videoPath, outPath) {
           fs.renameSync(tmp, outPath);
           try {
             const id = path.basename(outPath, ".jpg");
-            if (srcPath(id)) fs.writeFileSync(srcPath(id), "ffmpeg");
           } catch (_) {}
           return resolve(true);
         }
@@ -397,5 +379,5 @@ module.exports = {
   THUMB_DIR, safeId, thumbPath, hasThumb, readThumb, writeThumb,
   ensureThumb, ensureFromInfo, fileIdOf, thumbIndexOf, localSrc,
   extractFrame, listCached, warmupAll, warmupReady,
-  saveOfficialThumb, enqueueOfficialThumb, prefetchOfficialFromList, thumbOrigin
+  saveOfficialThumb, enqueueOfficialThumb, prefetchOfficialFromList
 };
