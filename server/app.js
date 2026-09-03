@@ -317,11 +317,26 @@ const server = http.createServer(async (req, res) => {
         } catch (_) {}
       }
       if (!img || !img.buf) return sendJson(res, 404, { ok: false, error: "无封面" });
-      res.writeHead(200, {
+      // 2026-09-03：封面服务端更新后前端仍显示旧图。
+      // 用户原话：「封面图明明服务端更新了，前端似乎缓存没更新」
+      // 【原代码】Cache-Control: public, max-age=86400 —— 浏览器强缓存一天，不回头问服务器。
+      // 【改为】no-cache + ETag/Last-Modified，文件 mtime 变了才 200 新图，没变 304。
+      const etag = img.size != null && img.mtimeMs != null
+        ? '"' + String(img.size) + "-" + String(Math.floor(img.mtimeMs)) + '"'
+        : '"' + String(img.buf.length) + '"';
+      const inm = String(req.headers["if-none-match"] || "");
+      if (inm && inm === etag) {
+        res.writeHead(304, { ETag: etag, "Cache-Control": "no-cache" });
+        return res.end();
+      }
+      const headers = {
         "Content-Type": img.contentType || "image/jpeg",
         "Content-Length": img.buf.length,
-        "Cache-Control": "public, max-age=86400"
-      });
+        "Cache-Control": "no-cache",
+        ETag: etag
+      };
+      if (img.mtimeMs) headers["Last-Modified"] = new Date(img.mtimeMs).toUTCString();
+      res.writeHead(200, headers);
       return res.end(method === "HEAD" ? undefined : img.buf);
     }
 

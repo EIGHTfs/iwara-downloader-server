@@ -47,7 +47,8 @@ function readThumb(id) {
   const p = thumbPath(id);
   if (!p || !hasThumb(id)) return null;
   try {
-    return { buf: fs.readFileSync(p), contentType: "image/jpeg", path: p };
+    const st = fs.statSync(p);
+    return { buf: fs.readFileSync(p), contentType: "image/jpeg", path: p, mtimeMs: st.mtimeMs, size: st.size };
   } catch (_) { return null; }
 }
 
