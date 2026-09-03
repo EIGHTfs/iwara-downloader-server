@@ -525,21 +525,33 @@ function fetchOneThumbnail(fileId, name) {
   });
 }
 
+// i.iwara.tv：thumbnail-0.jpg … thumbnail-9.jpg 经常是同一张 4824B 占位图；
+// 真封面是补零 thumbnail-00.jpg … thumbnail-09.jpg。10 以上不补零才是真图。
+const IWARA_PLACEHOLDER_MD5 = "a244c06f2a6369b23a5e18c9a2cb2a1b";
+function isIwaraPlaceholder(buf) {
+  if (!buf || buf.length !== 4824) return false;
+  return crypto.createHash("md5").update(buf).digest("hex") === IWARA_PLACEHOLDER_MD5;
+}
+
 function fetchThumbnail(fileId, n) {
-  // 2026-09-04：官方封面文件名可能是 thumbnail-1.jpg 或 thumbnail-01.jpg。
-  // 【原代码】只拼 thumbnail-${idx}.jpg
-  // 【改为】用户原话「搜索列表有些加载不出正确封面」「搜搜列表封面本来就走的官方」
-  // 【思路】部分条目 n=1 和 n=0 拉到同一张小图，补零再试一次。
+  // 2026-09-04：用户点名「椿: 要是被发现没穿衣服」和下面 2 个封面网页上一直错。
+  // 【原代码】先拉 thumbnail-${idx}.jpg，成功（含占位图）就返回；0-9 不补零全是占位图。
+  // 【改为】0-9 先补零；任一张若是 4824B 占位 MD5 则当失败试下一个。
+  // 【思路】模拟三条：本地 12 张 jpg 同一 hash a244c06f…；官方 thumbnail-0.jpg=占位，thumbnail-00.jpg 才是图。
   const idx = Number.isFinite(Number(n)) ? Number(n) : 0;
-  const names = ["thumbnail-" + idx + ".jpg"];
-  const pad = "thumbnail-" + String(idx).padStart(2, "0") + ".jpg";
-  if (names.indexOf(pad) < 0) names.push(pad);
+  const unpadded = "thumbnail-" + idx + ".jpg";
+  const padded = "thumbnail-" + String(idx).padStart(2, "0") + ".jpg";
+  const names = idx < 10 ? [padded, unpadded] : [unpadded, padded];
+  const uniq = [];
+  for (const name of names) if (uniq.indexOf(name) < 0) uniq.push(name);
   return (async () => {
     let lastErr = null;
-    for (const name of names) {
+    for (const name of uniq) {
       try {
         const img = await fetchOneThumbnail(fileId, name);
-        if (img && img.buf && img.buf.length > 32) return img;
+        if (!img || !img.buf || img.buf.length <= 32) continue;
+        if (isIwaraPlaceholder(img.buf)) continue;
+        return img;
       } catch (e) { lastErr = e; }
     }
     throw lastErr || new Error("无官方封面");
@@ -590,7 +602,7 @@ async function getVideoInfo(id) {
     private: !!raw.private,
     unlisted: !!raw.unlisted,
     thumbnail: raw.thumbnail,
-    file: { name: raw.file?.name, size: raw.file?.size },
+    file: { id: raw.file && raw.file.id, name: raw.file && raw.file.name, size: raw.file && raw.file.size },
     quality: best.name,
     liked: !!raw.liked,
     following: !!(raw.user && raw.user.following),
@@ -723,4 +735,15 @@ async function getComments(id) {
   return out.join("\n");
 }
 
-module.exports = { getXVersion, checkLogin, getVideoInfo, listVideos, getUserProfile, getComments, ensureAccessToken, listFollowing, listFollowingPage, likeVideo, followUser, autoLikeFollow, thumbnailUrl, fetchThumbnail, API_HOST, DEFAULT_UA, getCfIp };
+
+/** 只要封面用的 fileId + 选中序号，不拉下载源、不写视频索引。封面文件名 thumbs/<id>.jpg 就是本地索引。 */
+async function getThumbMeta(id) {
+  const vid = String(id || "").trim();
+  if (!vid) return null;
+  const raw = await fetchJson(`https://${API_HOST}/video/${vid}`, { retries: 1 });
+  const fileId = raw && raw.file && raw.file.id ? String(raw.file.id) : "";
+  const n = Number.isFinite(Number(raw && raw.thumbnail)) ? Number(raw.thumbnail) : 0;
+  return { id: vid, fileId, thumbnail: n };
+}
+
+module.exports = { getXVersion, checkLogin, getVideoInfo, listVideos, getUserProfile, getComments, ensureAccessToken, listFollowing, listFollowingPage, likeVideo, followUser, autoLikeFollow, thumbnailUrl, fetchThumbnail, getThumbMeta, isIwaraPlaceholder, API_HOST, DEFAULT_UA, getCfIp };

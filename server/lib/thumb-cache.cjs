@@ -7,6 +7,7 @@
 const fs = require("fs");
 const path = require("path");
 const { spawn } = require("child_process");
+const crypto = require("crypto");
 const api = require("./iwara-api");
 
 const DATA_DIR = process.env.GBMD_DATA_DIR || path.join(__dirname, "..");
@@ -36,11 +37,25 @@ function isJpegFile(p) {
   } catch (_) { return false; }
 }
 
+const IWARA_PLACEHOLDER_MD5 = "a244c06f2a6369b23a5e18c9a2cb2a1b";
+function isPlaceholderFile(p) {
+  try {
+    const st = fs.statSync(p);
+    if (st.size !== 4824) return false;
+    const buf = fs.readFileSync(p);
+    return crypto.createHash("md5").update(buf).digest("hex") === IWARA_PLACEHOLDER_MD5;
+  } catch (_) { return false; }
+}
+
 function hasThumb(id) {
   const p = thumbPath(id);
   if (!p) return false;
-  try { return fs.existsSync(p) && fs.statSync(p).size > 32 && isJpegFile(p); }
-  catch (_) { return false; }
+  try {
+    if (!fs.existsSync(p) || fs.statSync(p).size <= 32 || !isJpegFile(p)) return false;
+    // 占位图不算有封面，允许官方重拉覆盖
+    if (isPlaceholderFile(p)) return false;
+    return true;
+  } catch (_) { return false; }
 }
 
 function readThumb(id) {
@@ -68,6 +83,7 @@ function thumbOrigin(id) {
 function writeThumb(id, buf, origin) {
   const p = thumbPath(id);
   if (!p || !buf || !buf.length) return null;
+  if (api.isIwaraPlaceholder(buf)) return null;
   fs.mkdirSync(THUMB_DIR, { recursive: true });
   const tmp = p + ".part";
   fs.writeFileSync(tmp, buf);
@@ -159,11 +175,29 @@ function thumbIndexOf(info) {
   return Number.isFinite(Number(n)) ? Number(n) : 0;
 }
 
+async function resolveThumbMeta(id, fileId, n) {
+  let fid = String(fileId || "").trim();
+  let idx = Number.isFinite(Number(n)) ? Number(n) : null;
+  // 封面不进视频索引。缺 fileId/序号就现查官方 /video/:id（只要这两个字段）。
+  if (!fid || idx == null) {
+    try {
+      const meta = await api.getThumbMeta(id);
+      if (meta) {
+        if (!fid) fid = String(meta.fileId || "");
+        if (idx == null && Number.isFinite(Number(meta.thumbnail))) idx = Number(meta.thumbnail);
+      }
+    } catch (_) {}
+  }
+  if (idx == null) idx = 0;
+  return { fileId: fid, n: idx };
+}
+
 async function fetchRemote(id, fileId, n) {
   const vid = safeId(id);
-  const fid = String(fileId || "").trim();
+  const meta = await resolveThumbMeta(vid, fileId, n);
+  const fid = meta.fileId;
   if (!vid || !fid) return null;
-  const img = await api.fetchThumbnail(fid, n);
+  const img = await api.fetchThumbnail(fid, meta.n);
   if (!img || !img.buf || !img.buf.length) return null;
   writeThumb(vid, img.buf, "official");
   return { buf: img.buf, contentType: img.contentType || "image/jpeg", mtimeMs: Date.now(), size: img.buf.length };
@@ -179,12 +213,11 @@ const OFFICIAL_CONC = 2;
 
 function saveOfficialThumb(id, fileId, n) {
   const vid = safeId(id);
-  const fid = String(fileId || "").trim();
-  if (!vid || !fid) return Promise.resolve(null);
+  if (!vid) return Promise.resolve(null);
   // 已有封面不覆盖（播放页正确图不能被另一次官方/抽帧改掉）
   if (hasThumb(vid)) return Promise.resolve(readThumb(vid));
   if (inflight.has(vid)) return inflight.get(vid);
-  const job = fetchRemote(vid, fid, n).catch((e) => {
+  const job = fetchRemote(vid, fileId, n).catch((e) => {
     console.error("[thumb] official", vid, e && e.message || e);
     return null;
   }).finally(() => inflight.delete(vid));
@@ -237,11 +270,10 @@ function ensureThumb(id, opts) {
   const job = (async () => {
     const o = opts || {};
     const out = thumbPath(vid);
-    // 【原代码】先 ffmpeg 抽帧，失败再官方。【改为】官方优先于本地生成。
-    if (o.fileId) {
-      const remote = await fetchRemote(vid, o.fileId, o.n);
-      if (remote) return remote;
-    }
+    // 封面文件名 thumbs/<id>.jpg 就是索引，不写进视频索引。
+    // 没带 fileId 也走 fetchRemote：resolveThumbMeta 现查官方 /video/:id 拿 fileId+序号。
+    const remote = await fetchRemote(vid, o.fileId, o.n);
+    if (remote) return remote;
     if (o.filePath && await extractFrame(o.filePath, out)) return readThumb(vid);
     return null;
   })().catch((e) => {
@@ -341,7 +373,6 @@ function warmupAll(root) {
         // warmup 也官方优先，缺官方再抽本地视频帧
         return ensureThumb(vid, {
           fileId: entry.fileId || (found && found.entry && found.entry.fileId) || "",
-          n: entry.thumbnail,
           filePath: found && found.file || ""
         });
       }));
