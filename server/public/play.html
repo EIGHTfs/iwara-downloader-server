@@ -225,7 +225,6 @@ try {
       moreVideoAttr: { playsInline: true }
     });
     window.__art = art;
-    // 同域 /api/play 走 session cookie；crossOrigin 会变成 CORS 请求，服务端无 ACAO 头就播不了
     try {
       if (art.video) {
         art.video.removeAttribute("crossorigin");
@@ -319,14 +318,8 @@ try {
     });
   }
 
-  fetch("/api/play-info?id=" + encodeURIComponent(id), { credentials: "same-origin" })
-    .then(function (r) {
-      if (r.status === 401) {
-        location.href = "/login.html?next=" + encodeURIComponent(location.pathname + location.search);
-        return Promise.reject(new Error("未登录"));
-      }
-      return r.json();
-    })
+  fetch("/api/play-info?id=" + encodeURIComponent(id))
+    .then(function (r) { return r.json(); })
     .then(function (j) {
       if (!j) return;
       if (!j.ok) throw new Error(j.error || "读取失败");
@@ -353,7 +346,7 @@ try {
       $("#err").textContent = e.message || String(e);
     });
 
-  fetch("/api/index", { credentials: "same-origin" })
+  fetch("/api/index")
     .then(function (r) { return r.json(); })
     .then(function (j) {
       if (!j.ok) return;

@@ -316,6 +316,52 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    // 本地播放免登录：列表/元数据/视频流只读 config.downloadPath 本机文件，不走 Iwara 在线
+    if (method === "GET" && pathname === "/api/index") {
+      const c = cfg.readConfig();
+      return sendJson(res, 200, Object.assign({ ok: true }, videoIndex.listCatalog(c.downloadPath)));
+    }
+    if (method === "GET" && pathname === "/api/play-info") {
+      const id = String(parsed.query.id || "").trim();
+      if (!id) return sendJson(res, 400, { ok: false, error: "缺 id" });
+      const c = cfg.readConfig();
+      const hint = playHint(id);
+      const found = videoIndex.findPlayable(c.downloadPath, id, hint.savePath);
+      if (!found && !hint.savePath) return sendJson(res, 404, { ok: false, error: "下载目录里没有这个视频" });
+      const e = (found && found.entry) || {};
+      const size = (found && found.size) || 0;
+      const expected = hint.expected || size;
+      const growing = expected > 0 && size > 0 && size < expected;
+      const partial = !!(found && found.partial) || growing;
+      return sendJson(res, 200, {
+        ok: true,
+        id,
+        hasFile: !!(found && found.file) && size > 0,
+        partial,
+        name: e.name || hint.author || "",
+        username: e.username || "",
+        title: e.title || hint.title || hint.file || id,
+        fileId: e.fileId || "",
+        duration: e.duration || 0,
+        tags: e.tags || [],
+        createdAt: e.createdAt || "",
+        size,
+        expected,
+        ext: found && found.file ? path.extname(String(found.file).replace(/\.part$/i, "")).toLowerCase() : ""
+      });
+    }
+    if ((method === "GET" || method === "HEAD") && pathname === "/api/play") {
+      const id = String(parsed.query.id || "").trim();
+      if (!id) return sendJson(res, 400, { ok: false, error: "缺 id" });
+      const c = cfg.readConfig();
+      const hint = playHint(id);
+      const found = videoIndex.findPlayable(c.downloadPath, id, hint.savePath);
+      if (!found || !found.file) return sendJson(res, 404, { ok: false, error: "本机下载目录没有这个视频文件" });
+      const expected = hint.expected || found.size;
+      const growing = expected > 0 && found.size > 0 && found.size < expected;
+      return streamLocalVideo(req, res, found.file, { expected, partial: found.partial || growing });
+    }
+
     // ---- 需鉴权 ----
     if (pathname.startsWith("/api/") && !requireAuth(req)) {
       return sendJson(res, 401, { ok: false, error: "未登录" });
@@ -559,53 +605,6 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
-    // ---- 下载索引（精简：id → 作者/标题/fileId/时长/tags/上传日；不算 hash）----
-    if (method === "GET" && pathname === "/api/index") {
-      const c = cfg.readConfig();
-      return sendJson(res, 200, Object.assign({ ok: true }, videoIndex.listCatalog(c.downloadPath)));
-    }
-    if (method === "GET" && pathname === "/api/play-info") {
-      const id = String(parsed.query.id || "").trim();
-      if (!id) return sendJson(res, 400, { ok: false, error: "缺 id" });
-      const c = cfg.readConfig();
-      const hint = playHint(id);
-      const found = videoIndex.findPlayable(c.downloadPath, id, hint.savePath);
-      if (!found && !hint.savePath) return sendJson(res, 404, { ok: false, error: "索引里没有这个视频" });
-      const e = (found && found.entry) || {};
-      const size = (found && found.size) || 0;
-      const expected = hint.expected || size;
-      // 用户原话：「没下载完的part文件我希望也能部分播放」
-      // AI 思路：.part、或 aria2 正在往最终文件名写（size<total）都算 partial；有字节就能播
-      const growing = expected > 0 && size > 0 && size < expected;
-      const partial = !!(found && found.partial) || growing;
-      return sendJson(res, 200, {
-        ok: true,
-        id,
-        hasFile: !!(found && found.file) && size > 0,
-        partial,
-        name: e.name || hint.author || "",
-        username: e.username || "",
-        title: e.title || hint.title || hint.file || id,
-        fileId: e.fileId || "",
-        duration: e.duration || 0,
-        tags: e.tags || [],
-        createdAt: e.createdAt || "",
-        size,
-        expected,
-        ext: found && found.file ? path.extname(String(found.file).replace(/\.part$/i, "")).toLowerCase() : ""
-      });
-    }
-    if ((method === "GET" || method === "HEAD") && pathname === "/api/play") {
-      const id = String(parsed.query.id || "").trim();
-      if (!id) return sendJson(res, 400, { ok: false, error: "缺 id" });
-      const c = cfg.readConfig();
-      const hint = playHint(id);
-      const found = videoIndex.findPlayable(c.downloadPath, id, hint.savePath);
-      if (!found || !found.file) return sendJson(res, 404, { ok: false, error: "本地没有视频文件（还没下到可播的字节）" });
-      const expected = hint.expected || found.size;
-      const growing = expected > 0 && found.size > 0 && found.size < expected;
-      return streamLocalVideo(req, res, found.file, { expected, partial: found.partial || growing });
-    }
     if (method === "GET" && pathname === "/api/index/export") {
       const c = cfg.readConfig();
       const buf = videoIndex.catalogFileBuffer(c.downloadPath);
@@ -690,12 +689,10 @@ const server = http.createServer(async (req, res) => {
     }
 
     // ---- 静态 ----
-    // play.html / 首页与 /api/play 同一套 session cookie（Path=/，同源 sa6400.local:28463）
-    // 未登录先 302 到登录页并带回当前地址；已登录直接出页面，不再等前端 401
-    if ((method === "GET" || method === "HEAD") && (pathname === "/" || pathname === "/index.html" || pathname === "/play.html")) {
+    // 首页（下载/设置）仍要登录；play.html 免登录，只播本机下载目录
+    if ((method === "GET" || method === "HEAD") && (pathname === "/" || pathname === "/index.html")) {
       if (!requireAuth(req)) {
-        const next = (pathname === "/index.html" ? "/" : pathname) + (parsed.search || "");
-        res.writeHead(302, { Location: "/login.html?next=" + encodeURIComponent(next || "/") });
+        res.writeHead(302, { Location: "/login.html?next=" + encodeURIComponent("/" + (parsed.search || "")) });
         res.end();
         return;
       }
