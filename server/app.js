@@ -366,9 +366,12 @@ const server = http.createServer(async (req, res) => {
       const found = videoIndex.findPlayable(c.downloadPath, id, hint.savePath);
       if (!found && !hint.savePath) return sendJson(res, 404, { ok: false, error: "下载目录里没有这个视频" });
       const e = (found && found.entry) || {};
-      // 2026-09-03 用户原话：「视频文件不存在就不要生成封面图」
-      // 最简逻辑：有视频文件就抽帧覆盖，没有就跳过
-      if (found && found.file && id) {
+      // 2026-09-04：播放只读已有封面，不再覆盖。
+      // 【原代码】每次 /api/play-info 都 ensureFromInfo（会 fetchRemote/抽帧覆盖 jpg）。
+      // 【改为】用户原话「正常的封面播放时刷新变成错误的」「每次HTML封面独立，封面变正确，错误。刷新后恢复原因」
+      // 【思路】实测 3dqVfrNJMgjoYZ：播放前 15351 字节，play-info 后 1 秒变成另一张 4824。
+      //   play.html 500ms/2s 用 &t= 强刷把错图拉出来；F5 若走无 t 缓存或覆盖前文件就「刷新又对」。
+      if (found && found.file && id && !thumbCache.hasThumb(id)) {
         thumbCache.ensureFromInfo(id, e, found.file).catch(function () {});
       }
       const size = (found && found.size) || 0;

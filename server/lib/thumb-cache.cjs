@@ -52,13 +52,30 @@ function readThumb(id) {
   } catch (_) { return null; }
 }
 
-function writeThumb(id, buf) {
+function srcPath(id) {
+  const p = thumbPath(id);
+  return p ? p + ".src" : "";
+}
+
+function thumbOrigin(id) {
+  try {
+    const p = srcPath(id);
+    if (!p || !fs.existsSync(p)) return hasThumb(id) ? "unknown" : "";
+    return String(fs.readFileSync(p, "utf8")).trim();
+  } catch (_) { return hasThumb(id) ? "unknown" : ""; }
+}
+
+function writeThumb(id, buf, origin) {
   const p = thumbPath(id);
   if (!p || !buf || !buf.length) return null;
   fs.mkdirSync(THUMB_DIR, { recursive: true });
   const tmp = p + ".part";
   fs.writeFileSync(tmp, buf);
   fs.renameSync(tmp, p);
+  const src = srcPath(id);
+  if (src && origin) {
+    try { fs.writeFileSync(src, String(origin)); } catch (_) {}
+  }
   return p;
 }
 
@@ -109,6 +126,10 @@ function extractFrame(videoPath, outPath) {
       try {
         if (code === 0 && fs.existsSync(tmp) && fs.statSync(tmp).size > 32 && isJpegFile(tmp)) {
           fs.renameSync(tmp, outPath);
+          try {
+            const id = path.basename(outPath, ".jpg");
+            if (srcPath(id)) fs.writeFileSync(srcPath(id), "ffmpeg");
+          } catch (_) {}
           return resolve(true);
         }
       } catch (_) {}
@@ -144,7 +165,7 @@ async function fetchRemote(id, fileId, n) {
   if (!vid || !fid) return null;
   const img = await api.fetchThumbnail(fid, n);
   if (!img || !img.buf || !img.buf.length) return null;
-  writeThumb(vid, img.buf);
+  writeThumb(vid, img.buf, "official");
   return { buf: img.buf, contentType: img.contentType || "image/jpeg", mtimeMs: Date.now(), size: img.buf.length };
 }
 
@@ -160,6 +181,7 @@ function saveOfficialThumb(id, fileId, n) {
   const vid = safeId(id);
   const fid = String(fileId || "").trim();
   if (!vid || !fid) return Promise.resolve(null);
+  // 已有封面不覆盖（播放页正确图不能被另一次官方/抽帧改掉）
   if (hasThumb(vid)) return Promise.resolve(readThumb(vid));
   if (inflight.has(vid)) return inflight.get(vid);
   const job = fetchRemote(vid, fid, n).catch((e) => {
@@ -241,12 +263,16 @@ function ensureFromInfo(id, info, filePath) {
   try {
     if (!fs.existsSync(fp) || !fs.statSync(fp).isFile()) return Promise.resolve(null);
   } catch (_) { return Promise.resolve(null); }
+  // 2026-09-04：播放页不得覆盖已有封面。
+  // 【原代码】每次 play-info 都 ensureFromInfo → fetchRemote/extractFrame 覆盖 thumbs/<id>.jpg。
+  // 【改为】用户原话「正常的封面播放时刷新变成错误的」「每次HTML封面独立，封面变正确，错误。刷新后恢复原因」
+  // 【思路】模拟：GET 官方/抽帧图 15351 → 打 /api/play-info → 1 秒内文件变成另一张 4824。
+  //   play.html 又在 500ms/2000ms 用 &t= 强刷，把刚覆盖的错图显示出来。F5 若赶上覆盖前缓存就会「刷新又对」。
+  //   已有 jpg 只读；缺图才官方优先、再抽帧。
+  if (hasThumb(vid)) return Promise.resolve(readThumb(vid));
   if (inflight.has(vid)) return inflight.get(vid);
   const job = (async () => {
     const out = thumbPath(vid);
-    // 2026-09-04：官方封面优先于 ffmpeg 抽帧。
-    // 【原代码】先 extractFrame，失败再 fetchRemote。
-    // 【改为】用户原话「下载时从官方获取封面并按本地规范保存优先于本地生成」
     const fid = fileIdOf(info);
     if (fid) {
       const remote = await fetchRemote(vid, fid, thumbIndexOf(info));
@@ -340,5 +366,5 @@ module.exports = {
   THUMB_DIR, safeId, thumbPath, hasThumb, readThumb, writeThumb,
   ensureThumb, ensureFromInfo, fileIdOf, thumbIndexOf, localSrc,
   extractFrame, listCached, warmupAll, warmupReady,
-  saveOfficialThumb, enqueueOfficialThumb, prefetchOfficialFromList
+  saveOfficialThumb, enqueueOfficialThumb, prefetchOfficialFromList, thumbOrigin
 };

@@ -303,9 +303,12 @@ try {
     }).sort(function (a, b) { return String(b.createdAt).localeCompare(String(a.createdAt)); });
   }
 
-  // 封面 URL 加时间戳防缓存：播放后刷新封面
+  // 2026-09-04：播放封面 URL 稳定，不再加 Date.now()。
+  // 【原代码】thumbUrl / refreshCurrentThumb 每次 &t=时间戳，强迫浏览器丢掉上一张。
+  // 【改为】用户原话「正常的封面播放时刷新变成错误的」「刷新后恢复原因」
+  // 【思路】&t= 本意防缓存，结果把 play-info 刚覆盖的错图立刻显示；F5 无 t 又变回旧图。各页只用 /api/thumb?id=
   function thumbUrl(vid) {
-    return "/api/thumb?id=" + encodeURIComponent(vid) + "&t=" + Date.now();
+    return "/api/thumb?id=" + encodeURIComponent(vid);
   }
 
   function renderPlaylist(clear) {
@@ -353,13 +356,13 @@ try {
     // 2026-09-04：换 src 前清 hidden。用户原话「前端正常刷新封面了，刷新又没了」。
     // 【原代码】onerror 设 visibility=hidden，refreshCurrentThumb 只改 src，hidden 不恢复。
     // 【思路】第一次 404/304 空图把图藏死后，即使后面 JPEG 200 也看不见。
-    var ts = Date.now();
     var activeImg = document.querySelector(".playlist-item.active .thumb[data-vid]");
+    var url = thumbUrl(id);
     if (activeImg) {
       activeImg.style.visibility = "visible";
-      activeImg.src = "/api/thumb?id=" + encodeURIComponent(id) + "&t=" + ts;
+      if (activeImg.src.indexOf(url) < 0) activeImg.src = url;
     }
-    if (art) art.poster = "/api/thumb?id=" + encodeURIComponent(id) + "&t=" + ts;
+    if (art) art.poster = url;
   }
 
   function bindLazyLoad() {
@@ -410,9 +413,8 @@ try {
         extra.push("id " + id);
         $("#extra").textContent = extra.join(" · ");
         initPlayer(j, thumbUrl(id));
-        // play-info 返回后刷新封面（服务端 ensureFromInfo 可能刚抽帧）
-        setTimeout(refreshCurrentThumb, 500);
-        setTimeout(refreshCurrentThumb, 2000);
+        // 【原代码】setTimeout(refreshCurrentThumb, 500/2000) 等抽帧后强刷。
+        // 【改为】已有封面不覆盖，不必强刷。
       })
       .catch(function (e) {
         loadingVideo = false;
@@ -453,8 +455,6 @@ try {
       extra.push("id " + id);
       $("#extra").textContent = extra.join(" · ");
       initPlayer(j, thumbUrl(id));
-      setTimeout(refreshCurrentThumb, 500);
-      setTimeout(refreshCurrentThumb, 2000);
       playInfoDone = true;
       tryInit();
     })
