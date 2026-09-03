@@ -749,6 +749,18 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, downloader.removeItem(id));
     }
 
+    // ---- 播放短链 /{id} ----
+    // 2026-09-04：地址栏不要 play.html#id=。
+    // 【原代码】播放页是 /play.html#id=xxx
+    // 【改为】用户原话「http://sa6400.local:28463/play.html#id=lwpDY67t95gnCK不想要地址栏这么显示，我想只显示成http://sa6400.local:28463/lwpDY67t95gnCK」
+    // 【思路】单段路径且像视频 id、PUBLIC 里没有同名文件 → 吐 play.html。/api、/app.js、/login.html 不碰。
+    if ((method === "GET" || method === "HEAD") && /^\/[A-Za-z0-9_-]{4,64}$/.test(pathname || "")) {
+      const asFile = path.join(PUBLIC_DIR, pathname.slice(1));
+      let isFile = false;
+      try { isFile = fs.existsSync(asFile) && fs.statSync(asFile).isFile(); } catch (_) { isFile = false; }
+      if (!isFile) return serveStatic(req, res, "/play.html");
+    }
+
     // ---- 静态 ----
     // 首页（下载/设置）仍要登录；play.html 免登录，只播本机下载目录
     if ((method === "GET" || method === "HEAD") && (pathname === "/" || pathname === "/index.html")) {

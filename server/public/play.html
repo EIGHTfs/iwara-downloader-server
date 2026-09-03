@@ -164,11 +164,14 @@ try {
 <script>
 (function () {
   "use strict";
-  // ═══ ID：优先 hash #id=xxx，兼容查询 ?id=xxx ═══
-  // 用户原话：「视频播放网页第一次必须刷新才能加载视频，而且刷新后地址连接不对 http://sa6400.local:28463/play.html?id=hdEkJU8Ntkuic1#id=3dqVfrNJMgjoYZ」
-  // 【原代码】只读 location.hash；无 hash 时取索引第一个并 setIdToHash。
-  // 【改为】查询参数也当 id；无 hash 有 ?id= 时改写成 /play.html#id=xxx（去掉 query，避免刷新叠成 ?id=A#id=B）。
-  // 【思路】任务列表按钮以前写 ?id=，页面只认 hash → 第一次当「无 id」跳到目录第一条；刷新后 hash 才有值，看起来像必须刷新。
+  // ═══ 播放地址：/{id} ═══
+  // 用户原话：「http://sa6400.local:28463/play.html#id=lwpDY67t95gnCK不想要地址栏这么显示，我想只显示成http://sa6400.local:28463/lwpDY67t95gnCK」
+  // 【原代码】#id= / ?id= / play.html#id=
+  // 【改为】pathname 第一段就是 id；旧链接 replaceState 成 /{id}。切视频 pushState，不整页刷新。
+  function getIdFromPath() {
+    var m = (location.pathname || "").match(/^\/([A-Za-z0-9_-]{4,64})$/);
+    return m ? m[1] : "";
+  }
   function getIdFromHash() {
     var h = location.hash || "";
     var m = h.match(/[#&]id=([^&]*)/);
@@ -179,15 +182,17 @@ try {
     var m = q.match(/[?&]id=([^&]*)/);
     return m ? decodeURIComponent(m[1]).trim() : "";
   }
-  function setIdToHash(newId) {
-    if (newId) location.hash = "#id=" + encodeURIComponent(newId);
-    else location.hash = "";
+  function playUrl(vid) {
+    return "/" + encodeURIComponent(vid);
   }
-  var id = getIdFromHash() || getIdFromQuery();
-  if (id && !getIdFromHash()) {
-    var path = location.pathname || "/play.html";
-    history.replaceState(null, "", path + "#id=" + encodeURIComponent(id));
+  function setPlayUrl(newId, replace) {
+    if (!newId) return;
+    var url = playUrl(newId);
+    if (replace) history.replaceState(null, "", url);
+    else if (location.pathname !== url) history.pushState(null, "", url);
   }
+  var id = getIdFromPath() || getIdFromHash() || getIdFromQuery();
+  if (id && location.pathname !== playUrl(id)) setPlayUrl(id, true);
   var $ = function (s) { return document.querySelector(s); };
 
   function esc(s) {
@@ -231,8 +236,7 @@ try {
       ids.sort(function (a, b) {
         return String((map[b] || {}).createdAt || "").localeCompare(String((map[a] || {}).createdAt || ""));
       });
-      var path = location.pathname || "/play.html";
-      location.replace(path + "#id=" + encodeURIComponent(ids[0]));
+      location.replace("/" + encodeURIComponent(ids[0]));
     }).catch(function () { $("#title").textContent = "加载列表失败"; });
     return;
   }
@@ -337,7 +341,7 @@ try {
           '<div class="meta">' + esc(v.name) + (v.duration ? " · " + dur(v.duration) : "") + '</div>' +
         '</div>';
       item.onclick = (function (vid) {
-        return function () { if (vid !== id) setIdToHash(vid); };
+        return function () { if (vid !== id) { setPlayUrl(vid, false); loadVideo(vid); } };
       })(v.id);
       container.appendChild(item);
     }
@@ -423,9 +427,9 @@ try {
       });
   }
 
-  // ─── hashchange 监听：切换视频不刷新页面 ───
-  window.addEventListener("hashchange", function () {
-    var newId = getIdFromHash();
+  // ─── 前进/后退：/{id} ───
+  window.addEventListener("popstate", function () {
+    var newId = getIdFromPath() || getIdFromHash() || getIdFromQuery();
     if (newId && newId !== id) loadVideo(newId);
   });
 
