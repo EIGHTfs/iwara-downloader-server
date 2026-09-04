@@ -200,6 +200,7 @@ aria2 进程自己做 DNS。若本机 DNS 污染 iwara 子域，需在 **aria2 �
 ## 版本
 
 | 版本 | 内容 |
+| 1.1.0 | 网页界面截图：登录 / 下载 / 进度 / 搜索 / 设置 / 本地播放 / 油猴 |
 |---|---|
 | 1.0.12 | 任务列表左侧封面；播放列表同一张图。后台 `tool/ffmpeg` 抽帧到 `server/thumbs/<id>.jpg`，前台只读。文件名模板必须含 `{ID}` |
 | 1.0.11 | 进度页按钮对齐香蕉网（清除失败/清除完成，行尾 ▶播放 🔄重试 🚫跳过）。按时间搜索抽 `search-date-range.js`：结束含当天到次日 0 点，结束不能晚于今天，开始晚于结束则结束跟着开始 |
@@ -211,6 +212,29 @@ aria2 进程自己做 DNS。若本机 DNS 污染 iwara 子域，需在 **aria2 �
 | 1.0.5 | 正式进程改到下载盘同机；单脚本启停；跳过已下载不看索引 |
 
 ---
+
+
+## 界面截图
+
+实际运行界面（`http://sa6400.local:28463`，Chromium 无头 CDP 截取）。Cookie / Token 已打码。
+
+| 页面 | 说明 |
+|---|---|
+| [登录](docs/screenshots/01-login.jpg) | 访问密码登录 |
+| [下载](docs/screenshots/02-download.jpg) | 批量粘贴视频链接 / ID |
+| [下载进度](docs/screenshots/03-progress.jpg) | 任务列表、暂停/继续/重试、本地播放 |
+| [搜索](docs/screenshots/04-search.jpg) | 关键词搜索（对齐官网 `/search?query=`） |
+| [设置](docs/screenshots/05-settings.jpg) | 路径、文件名模板、后端、凭证 |
+| [本地播放](docs/screenshots/06-play.jpg) | `/{id}` 播放页（作者名前头像、右侧列表） |
+| [油猴脚本](docs/screenshots/07-userscript.jpg) | 页面右下角面板：发送到服务器 |
+
+![登录](docs/screenshots/01-login.jpg)
+![下载](docs/screenshots/02-download.jpg)
+![下载进度](docs/screenshots/03-progress.jpg)
+![搜索](docs/screenshots/04-search.jpg)
+![设置](docs/screenshots/05-settings.jpg)
+![本地播放](docs/screenshots/06-play.jpg)
+![油猴脚本](docs/screenshots/07-userscript.jpg)
 
 ## 用户数据（不入库）
 
