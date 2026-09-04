@@ -83,7 +83,6 @@ PID 文件：项目根 `iwara-downloader-server.pid`（不入库）。
 ├── stop.sh / restart.sh / status.sh    # 兼容薄壳 → start.sh
 ├── scripts/iwara-cred-fetch.user.js  # 油猴凭证采集 + 一键发送
 ├── userdata-manifest.json            # 用户数据文件清单（备份/恢复按此收集）
-├── TROUBLESHOOTING.md                # 踩坑记录（UA / DNS / 链接过期）
 └── server/
     ├── app.js
     ├── auth.js
@@ -196,13 +195,14 @@ PID 文件：项目根 `iwara-downloader-server.pid`（不入库）。
 }
 ```
 
-aria2 进程自己做 DNS。若本机 DNS 污染 iwara 子域，需在 **aria2 所在机器** 配 hosts，或用群晖 **DNS Server** 套件把 `iwara.tv` 通配 A 记录指到 `104.26.12.12`，并把该机系统 DNS 指到本机 `127.0.0.1`。细节见 `TROUBLESHOOTING.md`。
+aria2 进程自己做 DNS。若本机 DNS 污染 iwara 子域，需在 **aria2 所在机器** 配 hosts，或用群晖 **DNS Server** 套件把 `iwara.tv` 通配 A 记录指到 `104.26.12.12`，并把该机系统 DNS 指到本机 `127.0.0.1`。常见处理见下方「常见问题」。
 
 ---
 
 ## 版本
 
 | 版本 | 内容 |
+| 1.3.1 | 公开库不再跟踪开发者文档 / TROUBLESHOOTING.md |
 | 1.3.0 | start.sh：彩色输出、日志 10MB 轮转压缩、启动前校验 config.json、status 更详细 |
 | 1.2.0 | 启停脚本统一为 start.sh / start-windows.bat；PID 写在项目根 `iwara-downloader-server.pid` |
 | 1.1.1 | 设置页改为整页长图 |
@@ -270,7 +270,7 @@ A: `config.json` 的 `downloadPath`。`useAuthorSubdir: true` 时为 `<root>/<�
 A: 必须走 `/search?query=`（与官网 `https://www.iwara.tv/search?type=videos&query=奥黛塔` 一致），不要用 `/videos?search=`。当前版本已按官网 API。
 
 **Q: 下载 403？**  
-A: 常见原因：① 直链过期（必须每次重新获取，不要复用旧 URL）② UA 用了完整 Chrome（带 AppleWebKit）会被 CF 拦，必须用精简 UA ③ CDN 子域被挑战（会自动换子域）。详见 `TROUBLESHOOTING.md`。
+A: 常见原因：① 直链过期（必须每次重新获取，不要复用旧 URL）② UA 用了完整 Chrome（带 AppleWebKit）会被 CF 拦，必须用精简 UA ③ CDN 子域被挑战（会自动换子域）。常见处理见下方「常见问题」。
 
 **Q: Cookie / Token 会不会被推到 GitHub？**  
 A: 不会。`server/config.json` 已 gitignore。仓库只有空凭证的 `config.example.json`。

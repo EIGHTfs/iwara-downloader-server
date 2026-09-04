@@ -75,3 +75,7 @@ Thumbs.db
 # 内部稿
 docs/iwara-downloader-server-开发者文档-20260901.md
 handoff-ui-template.html
+
+# 开发者文档不入库（公开库）。本地可留着，权威副本在 ai-work-archive/开发者文档/
+docs/*开发者文档*.md
+TROUBLESHOOTING.md
