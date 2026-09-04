@@ -17,9 +17,25 @@ PROJECT_NAME="$(basename "$ROOT")"
 SERVER_DIR="$ROOT/server"
 PID_FILE="$ROOT/${PROJECT_NAME}.pid"
 LOG_FILE="$SERVER_DIR/server.log"
+CONFIG_FILE="$SERVER_DIR/config.json"
 DEFAULT_PORT="${DEFAULT_PORT:-8643}"
+LOG_ROTATE_BYTES=$((10 * 1024 * 1024))
+STOP_WAIT_SEC=10
 
-# 旧 PID 位置：stop 仍读，避免升级后漏杀；新进程只写 PID_FILE
+# ---------- 颜色（stdout 是终端才开；NO_COLOR / TERM=dumb 关闭）----------
+C_GREEN="" C_YELLOW="" C_RED="" C_DIM="" C_RESET=""
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-}" != "dumb" ]; then
+  C_GREEN=$'\033[32m'
+  C_YELLOW=$'\033[33m'
+  C_RED=$'\033[31m'
+  C_DIM=$'\033[2m'
+  C_RESET=$'\033[0m'
+fi
+ok()   { printf '%s%s%s\n' "$C_GREEN" "$*" "$C_RESET"; }
+warn() { printf '%s%s%s\n' "$C_YELLOW" "$*" "$C_RESET"; }
+err()  { printf '%s%s%s\n' "$C_RED" "$*" "$C_RESET"; }
+dim()  { printf '%s%s%s\n' "$C_DIM" "$*" "$C_RESET"; }
+
 legacy_pid_files() {
   printf '%s\n' \
     "$SERVER_DIR/app.pid" \
@@ -55,13 +71,89 @@ find_node() {
 }
 
 if ! find_node; then
-  echo "❌ 找不到 node。请安装 Node.js，或把官方二进制解压到 tool/node/"
+  err "❌ 找不到 node。请安装 Node.js，或把官方二进制解压到 tool/node/"
   exit 1
 fi
-echo "使用 Node: $NODE_BIN ($("$NODE_BIN" -v 2>/dev/null))"
+ok "✓ Node: $NODE_BIN ($("$NODE_BIN" -v 2>/dev/null))"
+
+file_size() {
+  local f="$1"
+  [ -f "$f" ] || { echo 0; return; }
+  stat -c%s "$f" 2>/dev/null || stat -f%z "$f" 2>/dev/null || wc -c < "$f"
+}
+
+human_size() {
+  local n="$1"
+  if [ "$n" -ge 1048576 ]; then awk -v n="$n" 'BEGIN{printf "%.1fMB", n/1048576}'; else awk -v n="$n" 'BEGIN{printf "%.1fKB", n/1024}'; fi
+}
+
+# ---------- 配置验证（不打印 Cookie / Token / 密码哈希）----------
+validate_config() {
+  if [ ! -f "$CONFIG_FILE" ]; then
+    warn "⚠️  无 $CONFIG_FILE ，启动后会按默认值生成"
+    return 0
+  fi
+  local out rc=0
+  out="$("$NODE_BIN" -e '
+const fs = require("fs");
+const p = process.argv[1];
+const def = Number(process.argv[2]);
+let raw;
+try { raw = fs.readFileSync(p, "utf8"); }
+catch (e) {
+  const code = e && e.code ? e.code : "";
+  console.log((code === "EACCES" || code === "EPERM" ? "NO_PERM " : "READ_FAIL ") + (e.message || code));
+  process.exit(2);
+}
+let c;
+try { c = JSON.parse(raw); }
+catch (e) { console.log("JSON_FAIL " + e.message); process.exit(3); }
+if (!c || typeof c !== "object" || Array.isArray(c)) {
+  console.log("NOT_OBJECT");
+  process.exit(4);
+}
+if (c.port != null && c.port !== "") {
+  const n = Number(c.port);
+  if (!Number.isInteger(n) || n < 1 || n > 65535) {
+    console.log("BAD_PORT " + String(c.port));
+    process.exit(5);
+  }
+}
+const port = (c.port == null || c.port === "") ? def : Number(c.port);
+console.log("OK " + port);
+' "$CONFIG_FILE" "$DEFAULT_PORT" 2>&1)" || rc=$?
+  case "$out" in
+    OK\ *) ok "✓ config.json 格式正常  port=${out#OK }"; return 0 ;;
+    NO_PERM\ *) warn "⚠️  无权限读 config.json，跳过格式校验"; return 0 ;;
+  esac
+  err "❌ config.json 校验失败：$out"
+  return 1
+}
 
 config_port() {
-  "$NODE_BIN" -e "try{const c=require(process.argv[1]);console.log(c.port||$DEFAULT_PORT)}catch(e){console.log($DEFAULT_PORT)}" "$SERVER_DIR/config.json" 2>/dev/null || echo "$DEFAULT_PORT"
+  "$NODE_BIN" -e '
+try {
+  const c = require(process.argv[1]);
+  const d = Number(process.argv[2]);
+  const n = Number(c.port);
+  console.log(Number.isInteger(n) && n >= 1 && n <= 65535 ? n : d);
+} catch (e) { console.log(process.argv[2]); }
+' "$CONFIG_FILE" "$DEFAULT_PORT" 2>/dev/null || echo "$DEFAULT_PORT"
+}
+
+rotate_log() {
+  [ -f "$LOG_FILE" ] || return 0
+  local sz
+  sz="$(file_size "$LOG_FILE")"
+  [ "$sz" -gt "$LOG_ROTATE_BYTES" ] || return 0
+  local ts dest
+  ts="$(date +%Y%m%d-%H%M%S)"
+  dest="${LOG_FILE}.${ts}"
+  mv "$LOG_FILE" "$dest" || return 0
+  if command -v gzip >/dev/null 2>&1; then
+    gzip -f "$dest" && dest="${dest}.gz"
+  fi
+  warn "⚠️  日志超过 10MB，已轮转: $dest ($(human_size "$sz"))"
 }
 
 pid_alive() {
@@ -88,6 +180,15 @@ collect_live_pids() {
   done
 }
 
+listen_line() {
+  local port="$1"
+  if command -v ss >/dev/null 2>&1; then
+    ss -tln 2>/dev/null | awk -v p=":$port" '$0 ~ p {print; exit}'
+  elif command -v netstat >/dev/null 2>&1; then
+    netstat -tln 2>/dev/null | awk -v p=":$port" '$0 ~ p {print; exit}'
+  fi
+}
+
 start_server() {
   local port_opt=""
   while [ $# -gt 0 ]; do
@@ -96,15 +197,17 @@ start_server() {
       *) shift ;;
     esac
   done
+  validate_config || return 1
   local port="${port_opt:-$(config_port)}"
   local live
   live="$(collect_live_pids | head -n 1 || true)"
   if [ -n "$live" ]; then
-    echo "⚠️  已在运行 (PID $live, 端口 $port)。如需重启: ./start.sh restart"
+    warn "⚠️  已在运行 (PID $live, 端口 $port)。如需重启: ./start.sh restart"
     return 1
   fi
   rm -f "$PID_FILE"
   mkdir -p "$SERVER_DIR"
+  rotate_log
   cd "$SERVER_DIR" || exit 1
   local cmd=("$NODE_BIN" boot.cjs)
   if [ -n "$port_opt" ]; then
@@ -120,21 +223,22 @@ start_server() {
   local new_pid
   new_pid="$(cat "$PID_FILE")"
 
-  local ok=0 i
+  local okflag=0 i
   for i in $(seq 1 8); do
     sleep 1
     if curl -sf -m 3 "http://127.0.0.1:$port/api/status" > /dev/null 2>&1; then
-      ok=1
+      okflag=1
       break
     fi
     pid_alive "$new_pid" || break
   done
-  if [ "$ok" = 1 ]; then
-    echo "✅ 启动成功  PID=$new_pid  端口=$port"
-    echo "   页面: http://<本机IP>:$port   日志: $LOG_FILE"
-    echo "   PID 文件: $PID_FILE"
+  if [ "$okflag" = 1 ]; then
+    ok "✅ 启动成功  PID=$new_pid  端口=$port"
+    echo "   页面: http://<本机IP>:$port"
+    echo "   日志: $LOG_FILE"
+    echo "   PID:  $PID_FILE"
   else
-    echo "❌ 启动失败（8 秒内未通过健康检查），最近日志："
+    err "❌ 启动失败（8 秒内未通过健康检查），最近日志："
     tail -15 "$LOG_FILE" 2>/dev/null
     return 1
   fi
@@ -142,55 +246,75 @@ start_server() {
 
 stop_one() {
   local pid="$1"
-  echo "发送 SIGTERM 给 PID=$pid ..."
+  warn "⏹  SIGTERM  PID=$pid （最多等 ${STOP_WAIT_SEC}s）"
   kill "$pid" 2>/dev/null || true
   local i
-  for i in $(seq 1 10); do
-    pid_alive "$pid" || return 0
+  for i in $(seq 1 "$STOP_WAIT_SEC"); do
+    if ! pid_alive "$pid"; then
+      ok "✓ PID $pid 已在 ${i}s 内退出"
+      return 0
+    fi
     sleep 1
   done
   if pid_alive "$pid"; then
-    echo "进程未退出，发送 SIGKILL 给 PID=$pid ..."
+    warn "⚠️  ${STOP_WAIT_SEC}s 未退出，SIGKILL PID=$pid"
     kill -9 "$pid" 2>/dev/null || true
+    sleep 1
   fi
+  if pid_alive "$pid"; then
+    err "❌ PID $pid 仍在，请检查"
+    return 1
+  fi
+  ok "✓ PID $pid 已强制结束"
 }
 
 stop_server() {
-  local pids stopped=0
+  local pids
   pids="$(collect_live_pids || true)"
   if [ -z "$pids" ]; then
-    echo "未运行（无有效 PID）"
+    warn "⚠️  未运行（无有效 PID）"
     rm -f "$PID_FILE"
     local f
     for f in $(legacy_pid_files); do rm -f "$f"; done
     return 0
   fi
+  local rc=0
   for p in $pids; do
-    stop_one "$p"
-    stopped=1
+    stop_one "$p" || rc=1
   done
   rm -f "$PID_FILE"
   local f
   for f in $(legacy_pid_files); do rm -f "$f"; done
-  if [ "$stopped" = 1 ]; then
-    echo "✅ 已停止"
+  if [ "$rc" = 0 ]; then
+    ok "✅ 已停止"
+  else
+    err "❌ 停止未完成"
   fi
+  return "$rc"
 }
 
 status_server() {
   local port
   port="$(config_port)"
-  echo "项目:   $PROJECT_NAME"
-  echo "PID文件: $PID_FILE"
+  echo "======== $PROJECT_NAME ========"
+  echo "根目录: $ROOT"
+  echo "PID文件: $PID_FILE$([ -f "$PID_FILE" ] && echo " (存在)" || echo " (无)")"
+  echo "配置:   $CONFIG_FILE"
+  validate_config || true
+
   local p
   p="$(read_pid_file "$PID_FILE" 2>/dev/null || true)"
   if pid_alive "$p"; then
-    echo "进程:   ✅ PID $p"
+    ok "进程:   ✓ PID $p"
+    ps -o pid=,ppid=,etime=,rss=,stat=,args= -p "$p" 2>/dev/null | while IFS= read -r line; do
+      dim "        $line"
+    done
   elif [ -n "$p" ]; then
-    echo "进程:   ❌ PID 文件存在但进程已退出"
+    err "进程:   ✗ PID 文件有 $p 但进程已退出"
   else
-    echo "进程:   ❌ 未运行（无 PID 文件）"
+    err "进程:   ✗ 未运行"
   fi
+
   local extra extra_other=""
   extra="$(ps -eo pid,args 2>/dev/null | awk -v root="$ROOT" '
     $0 ~ /boot\.cjs/ && $0 ~ /node/ && index($0, root) { print $1 }
@@ -200,25 +324,52 @@ status_server() {
   done
   extra_other="$(echo "$extra_other" | xargs)"
   if [ -n "$extra_other" ]; then
-    echo "进程:   ⚠️  发现未记录在 PID 文件的进程: $extra_other"
+    warn "进程:   ⚠️  未记入 PID 文件: $extra_other"
   fi
-  if curl -sf -m 5 "http://127.0.0.1:$port/api/status" > /dev/null 2>&1; then
-    echo "HTTP:   ✅ http://127.0.0.1:$port/api/status 正常"
-    curl -s -m 5 "http://127.0.0.1:$port/api/status" 2>/dev/null | head -c 200
-    echo
+
+  local lis
+  lis="$(listen_line "$port")"
+  if [ -n "$lis" ]; then
+    ok "监听:   ✓ 端口 $port"
+    dim "        $lis"
   else
-    echo "HTTP:   ❌ http://127.0.0.1:$port/api/status 无响应"
+    warn "监听:   未发现 :$port"
   fi
-  echo "日志:   $LOG_FILE"
+
+  local curlout code time
+  curlout="$(curl -sS -m 5 -o /tmp/${PROJECT_NAME}-status.body -w '%{http_code} %{time_total}' "http://127.0.0.1:$port/api/status" 2>/dev/null || echo "000 0")"
+  code="${curlout%% *}"
+  time="${curlout#* }"
+  if [ "$code" = "200" ]; then
+    ok "HTTP:   ✓ GET /api/status  $code  ${time}s"
+    head -c 240 "/tmp/${PROJECT_NAME}-status.body" 2>/dev/null; echo
+  else
+    err "HTTP:   ✗ GET /api/status  HTTP $code"
+  fi
+  rm -f "/tmp/${PROJECT_NAME}-status.body"
+
+  if [ -f "$LOG_FILE" ]; then
+    local sz mtime
+    sz="$(file_size "$LOG_FILE")"
+    mtime="$(date -r "$LOG_FILE" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || stat -c %y "$LOG_FILE" 2>/dev/null | cut -d. -f1)"
+    echo "日志:   $LOG_FILE  $(human_size "$sz")  更新 $mtime"
+    if [ "$sz" -gt "$LOG_ROTATE_BYTES" ]; then
+      warn "日志:   已超过 10MB，下次 start/restart 会轮转压缩"
+    fi
+    echo "-------- 最近 8 行 --------"
+    tail -8 "$LOG_FILE" 2>/dev/null
+  else
+    warn "日志:   尚无 $LOG_FILE"
+  fi
 }
 
 if [ "${1:-}" = "--set-password" ]; then
   if [ -z "${2:-}" ]; then
-    echo "❌ 请提供新密码: --set-password \"新密码\""
+    err "❌ 请提供新密码: --set-password \"新密码\""
     exit 1
   fi
   "$NODE_BIN" "$SERVER_DIR/boot.cjs" --set-password "$2"
-  echo "✓ 密码已设置"
+  ok "✓ 密码已设置"
   exit 0
 fi
 
@@ -237,7 +388,7 @@ case "$CMD" in
   restart) stop_server; sleep 1; start_server "$@" ;;
   status)  status_server ;;
   *)
-    echo "❌ 未知命令: $CMD"
+    err "❌ 未知命令: $CMD"
     echo "可用命令: start, stop, restart, status"
     exit 1
     ;;

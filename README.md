@@ -59,6 +59,8 @@ PID 文件：项目根 `iwara-downloader-server.pid`（不入库）。
 
 `start-linux.sh` / `start-macos.sh` / `start-windows-background.bat` 是薄壳，转发到上面两个主入口。旧名 `stop.sh` / `restart.sh` / `status.sh` 若仍存在，同样转发到 `start.sh`。
 
+终端会自动用绿/黄/红提示（管道或 `NO_COLOR` 时关闭）。日志超过 10MB 在 start/restart 时轮转并 gzip。启动前校验 `server/config.json` 是否为合法 JSON、端口是否在 1–65535。
+
 ---
 
 ## 网页界面
@@ -201,6 +203,7 @@ aria2 进程自己做 DNS。若本机 DNS 污染 iwara 子域，需在 **aria2 �
 ## 版本
 
 | 版本 | 内容 |
+| 1.3.0 | start.sh：彩色输出、日志 10MB 轮转压缩、启动前校验 config.json、status 更详细 |
 | 1.2.0 | 启停脚本统一为 start.sh / start-windows.bat；PID 写在项目根 `iwara-downloader-server.pid` |
 | 1.1.1 | 设置页改为整页长图 |
 | 1.1.0 | 网页界面截图：登录 / 下载 / 进度 / 搜索 / 设置 / 本地播放 / 油猴 |
