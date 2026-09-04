@@ -33,7 +33,7 @@ cp server/config.example.json server/config.json
 # 编辑 server/config.json：填 iwaraToken 或 iwaraCookie、downloadPath
 
 # 3. （可选）设置访问密码
-node server/app.js --set-password "你的密码"
+node server/boot.cjs --set-password "你的密码"
 
 # 4. 启动（无参默认 restart；未运行会直接启动）
 ./start.sh
@@ -43,7 +43,7 @@ node server/app.js --set-password "你的密码"
 > 未设置密码时**只警告、可直接使用**（局域网内任何人可访问，建议尽快设置）。
 > 首次启动若没有 `config.json`，会按 `config.js` 的默认值运行；正式使用请从 example 复制后再填路径与凭证。
 
-**启停（Linux/群晖 用 `start.sh`，macOS 用 `start-macos.sh`，Windows 用 `start-windows.bat`）**
+**启停（POSIX 用 `start.sh`，Windows 用 `start-windows.bat`）**
 
 | 命令 | 作用 |
 |---|---|
@@ -55,8 +55,9 @@ node server/app.js --set-password "你的密码"
 | `./start.sh --port 8643` | 兼容旧用法（等价 restart） |
 | `./start.sh --set-password "新密码"` | 设置访问密码（不启动服务） |
 
-> 旧脚本名 `stop.sh` / `restart.sh` / `status.sh` 保留为薄壳，转发到 `start.sh`，旧习惯/文档引用不受影响。
-> `start-windows-background.bat` 是 Windows 入口薄壳，行为与 `start-windows.bat` 一致。
+PID 文件：项目根 `iwara-downloader-server.pid`（不入库）。
+
+`start-linux.sh` / `start-macos.sh` / `start-windows-background.bat` 是薄壳，转发到上面两个主入口。旧名 `stop.sh` / `restart.sh` / `status.sh` 若仍存在，同样转发到 `start.sh`。
 
 ---
 
@@ -200,6 +201,7 @@ aria2 进程自己做 DNS。若本机 DNS 污染 iwara 子域，需在 **aria2 �
 ## 版本
 
 | 版本 | 内容 |
+| 1.2.0 | 启停脚本统一为 start.sh / start-windows.bat；PID 写在项目根 `iwara-downloader-server.pid` |
 | 1.1.1 | 设置页改为整页长图 |
 | 1.1.0 | 网页界面截图：登录 / 下载 / 进度 / 搜索 / 设置 / 本地播放 / 油猴 |
 |---|---|

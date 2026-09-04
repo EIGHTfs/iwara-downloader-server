@@ -1,47 +1,61 @@
 #!/usr/bin/env bash
 # ============================================================
-# iwara-downloader-server 启动脚本（单脚本，对照 gbmd start-linux.sh）
+# POSIX 启停脚本（Linux / 群晖 / macOS 共用）
 # 用法：
-#   ./start.sh start [--port PORT]        启动（缺省端口读 config.json，再缺省 8643）
-#   ./start.sh restart [--port PORT]      重启（默认命令）
-#   ./start.sh stop                       停止（只杀 PID 文件里的进程，先 TERM 后 KILL）
-#   ./start.sh status                     状态（进程 / 端口 / HTTP 健康检查）
-#   ./start.sh --port PORT                兼容旧用法（等价 restart）
-#   ./start.sh --set-password "新密码"    设置访问密码（不启动服务）
-# 兼容旧脚本：./stop.sh / ./restart.sh / ./status.sh 均为薄壳转发到本脚本。
-# 特性：PID 文件管理 / 端口优先级（--port > config.json > 8643）/
-#       健康检查（启动后最多等 8 秒）/ 重复启动保护 / 无 setsid 退回 nohup
-# 2026-09-04：kill-gate-service-script 禁止 pgrep/pkill 宽匹配兜底。
+#   ./start.sh start [--port PORT]
+#   ./start.sh restart [--port PORT]   # 默认命令
+#   ./start.sh stop
+#   ./start.sh status
+#   ./start.sh --port PORT             # 兼容旧用法（等价 restart）
+#   ./start.sh --set-password "新密码"
+# PID：项目根 / 项目全称.pid（见 pid-file-at-project-root）
 # ============================================================
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_NAME="$(basename "$ROOT")"
 SERVER_DIR="$ROOT/server"
-PID_FILE="$SERVER_DIR/app.pid"
+PID_FILE="$ROOT/${PROJECT_NAME}.pid"
 LOG_FILE="$SERVER_DIR/server.log"
-DEFAULT_PORT=8643
+DEFAULT_PORT="${DEFAULT_PORT:-8643}"
 
-# ---------- Node 查找（tool/node Node24 > PATH 群晖套件 > PATH） ----------
-# 群晖 DSM 默认 PATH 没有 node；项目 tool/node 放官方 Node 24（CF 只放行 Node24 指纹）
-export PATH="$ROOT/tool/node/bin:/usr/local/bin:/var/packages/Node.js_v24/target/usr/local/bin:/var/packages/Node.js_v22/target/usr/local/bin:/var/packages/Node.js_v20/target/usr/local/bin:$PATH"
+# 旧 PID 位置：stop 仍读，避免升级后漏杀；新进程只写 PID_FILE
+legacy_pid_files() {
+  printf '%s\n' \
+    "$SERVER_DIR/app.pid" \
+    "$SERVER_DIR/${PROJECT_NAME}.pid" \
+    "$SERVER_DIR/gbmd.pid" \
+    "/tmp/gbmd.pid" \
+    "/tmp/gbmd-macos.pid" \
+    "/tmp/${PROJECT_NAME}.pid"
+}
+
+export PATH="$ROOT/tool/node/bin:/usr/local/bin:/opt/homebrew/bin:/opt/node/bin:/var/packages/Node.js_v24/target/usr/local/bin:/var/packages/Node.js_v22/target/usr/local/bin:/var/packages/Node.js_v20/target/usr/local/bin:$PATH"
 export FFMPEG="${FFMPEG:-$ROOT/tool/ffmpeg}"
+
 find_node() {
+  local c
   for c in \
     "$ROOT/tool/node/bin/node" \
     /usr/local/bin/node \
+    /opt/homebrew/bin/node \
+    /opt/node/bin/node \
     /var/packages/Node.js_v24/target/usr/local/bin/node \
     /var/packages/Node.js_v22/target/usr/local/bin/node \
     /var/packages/Node.js_v20/target/usr/local/bin/node \
     node; do
-    if [ -n "$c" ] && command -v "$c" >/dev/null 2>&1; then
-      NODE_BIN="$(command -v "$c")"
-      return 0
-    fi
+    if [ -x "$c" ]; then NODE_BIN="$c"; return 0; fi
+    if command -v "$c" >/dev/null 2>&1; then NODE_BIN="$(command -v "$c")"; return 0; fi
+  done
+  local nvm
+  for nvm in "$HOME"/.nvm/versions/node/*/bin/node; do
+    if [ -x "$nvm" ]; then NODE_BIN="$nvm"; return 0; fi
   done
   return 1
 }
+
 if ! find_node; then
-  echo "❌ 找不到 node。请把官方 linux-x64 解压到 tool/node/，或安装 Node.js 套件"
+  echo "❌ 找不到 node。请安装 Node.js，或把官方二进制解压到 tool/node/"
   exit 1
 fi
 echo "使用 Node: $NODE_BIN ($("$NODE_BIN" -v 2>/dev/null))"
@@ -50,55 +64,75 @@ config_port() {
   "$NODE_BIN" -e "try{const c=require(process.argv[1]);console.log(c.port||$DEFAULT_PORT)}catch(e){console.log($DEFAULT_PORT)}" "$SERVER_DIR/config.json" 2>/dev/null || echo "$DEFAULT_PORT"
 }
 
-# ---------- 启动 ----------
+pid_alive() {
+  local p="$1"
+  [ -n "$p" ] && kill -0 "$p" 2>/dev/null
+}
+
+read_pid_file() {
+  local f="$1"
+  [ -f "$f" ] && [ -s "$f" ] || return 1
+  tr -d ' \t\r\n' < "$f"
+}
+
+collect_live_pids() {
+  local f p seen=" "
+  for f in "$PID_FILE" $(legacy_pid_files); do
+    p="$(read_pid_file "$f" 2>/dev/null || true)"
+    if pid_alive "$p"; then
+      case "$seen" in
+        *" $p "*) ;;
+        *) seen="$seen$p "; printf '%s\n' "$p" ;;
+      esac
+    fi
+  done
+}
+
 start_server() {
   local port_opt=""
-  while [[ $# -gt 0 ]]; do
+  while [ $# -gt 0 ]; do
     case "$1" in
-      --port) port_opt="$2"; shift 2 ;;
+      --port) port_opt="${2:-}"; shift 2 ;;
       *) shift ;;
     esac
   done
   local port="${port_opt:-$(config_port)}"
-
-  # 已在运行？
-  if [ -f "$PID_FILE" ] && [ -s "$PID_FILE" ]; then
-    OLD_PID="$(cat "$PID_FILE")"
-    if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
-      echo "⚠️  已在运行 (PID $OLD_PID, 端口 $port)。如需重启: ./start.sh restart"
-      return 1
-    fi
-    rm -f "$PID_FILE"
+  local live
+  live="$(collect_live_pids | head -n 1 || true)"
+  if [ -n "$live" ]; then
+    echo "⚠️  已在运行 (PID $live, 端口 $port)。如需重启: ./start.sh restart"
+    return 1
   fi
-
+  rm -f "$PID_FILE"
+  mkdir -p "$SERVER_DIR"
   cd "$SERVER_DIR" || exit 1
-  # 用户原话：「这个项目不需要packagejson文件」——用 boot.cjs 强制 CJS，不写 package.json
   local cmd=("$NODE_BIN" boot.cjs)
-  if [ -n "$port_opt" ]; then cmd+=("--port" "$port_opt"); fi
+  if [ -n "$port_opt" ]; then
+    export PORT="$port_opt"
+    cmd+=("--port" "$port_opt")
+  fi
   if command -v setsid >/dev/null 2>&1; then
-    setsid nohup "${cmd[@]}" > "$LOG_FILE" 2>&1 < /dev/null &
+    setsid nohup "${cmd[@]}" >> "$LOG_FILE" 2>&1 < /dev/null &
   else
-    nohup "${cmd[@]}" > "$LOG_FILE" 2>&1 < /dev/null &
+    nohup "${cmd[@]}" >> "$LOG_FILE" 2>&1 < /dev/null &
   fi
   echo $! > "$PID_FILE"
-  NEW_PID="$(cat "$PID_FILE")"
+  local new_pid
+  new_pid="$(cat "$PID_FILE")"
 
-  # 健康检查（最多 8 秒）
-  OK=0
+  local ok=0 i
   for i in $(seq 1 8); do
     sleep 1
     if curl -sf -m 3 "http://127.0.0.1:$port/api/status" > /dev/null 2>&1; then
-      OK=1
+      ok=1
       break
     fi
-    if ! kill -0 "$NEW_PID" 2>/dev/null; then
-      break   # 进程已退出 = 启动失败
-    fi
+    pid_alive "$new_pid" || break
   done
-
-  if [ "$OK" = 1 ]; then
-    echo "✅ 启动成功  PID=$NEW_PID  端口=$port"
+  if [ "$ok" = 1 ]; then
+    echo "✅ 启动成功  PID=$new_pid  端口=$port"
     echo "   页面: http://<本机IP>:$port   日志: $LOG_FILE"
+    echo "   PID 文件: $PID_FILE"
   else
     echo "❌ 启动失败（8 秒内未通过健康检查），最近日志："
     tail -15 "$LOG_FILE" 2>/dev/null
@@ -106,77 +140,68 @@ start_server() {
   fi
 }
 
-# ---------- 停止 ----------
-stop_server() {
-  local stopped=0
-  # 1) PID 文件优雅停止
-  if [ -f "$PID_FILE" ] && [ -s "$PID_FILE" ]; then
-    PID="$(cat "$PID_FILE")"
-    if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
-      echo "发送 SIGTERM 给 PID=$PID ..."
-      kill "$PID" 2>/dev/null || true
-      for i in $(seq 1 10); do
-        sleep 1
-        kill -0 "$PID" 2>/dev/null || { stopped=1; break; }
-      done
-      if [ "$stopped" != 1 ]; then
-        echo "未优雅退出，强制 SIGKILL PID=$PID"
-        kill -9 "$PID" 2>/dev/null || true
-        stopped=1
-      fi
-    fi
-    rm -f "$PID_FILE"
-  fi
-  # 2026-09-04 修改：停服务只杀 PID 文件。
-  # 【原代码】pgrep -f '[n]ode .*boot[.]cjs' | xargs kill
-  # 【改为】kill-gate-service-script：禁止 pgrep/pkill 宽匹配；只精确 kill PID 文件。
-  # 【思路】宽匹配可能误伤其他项目的 boot.cjs；PID 对不上时用 status 报未记录进程，不自动杀。
-  # extra="$(pgrep -f '[n]ode .*boot[.]cjs' 2>/dev/null || true)"
-  # if [ -n "$extra" ]; then
-  #   echo "兜底清理残留进程..."
-  #   echo "$extra" | xargs -r kill 2>/dev/null || true
-  #   stopped=1
-  # fi
-
-  if [ "$stopped" = 1 ]; then
-    echo "✅ 服务已停止"
-  else
-    echo "ℹ️  未发现运行中的服务"
+stop_one() {
+  local pid="$1"
+  echo "发送 SIGTERM 给 PID=$pid ..."
+  kill "$pid" 2>/dev/null || true
+  local i
+  for i in $(seq 1 10); do
+    pid_alive "$pid" || return 0
+    sleep 1
+  done
+  if pid_alive "$pid"; then
+    echo "进程未退出，发送 SIGKILL 给 PID=$pid ..."
+    kill -9 "$pid" 2>/dev/null || true
   fi
 }
 
-# ---------- 状态 ----------
+stop_server() {
+  local pids stopped=0
+  pids="$(collect_live_pids || true)"
+  if [ -z "$pids" ]; then
+    echo "未运行（无有效 PID）"
+    rm -f "$PID_FILE"
+    local f
+    for f in $(legacy_pid_files); do rm -f "$f"; done
+    return 0
+  fi
+  for p in $pids; do
+    stop_one "$p"
+    stopped=1
+  done
+  rm -f "$PID_FILE"
+  local f
+  for f in $(legacy_pid_files); do rm -f "$f"; done
+  if [ "$stopped" = 1 ]; then
+    echo "✅ 已停止"
+  fi
+}
+
 status_server() {
   local port
   port="$(config_port)"
-  echo "=== iwara-downloader-server 状态 ==="
-  echo "端口配置: $port"
-
-  if [ -f "$PID_FILE" ] && [ -s "$PID_FILE" ]; then
-    PID="$(cat "$PID_FILE")"
-    if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
-      echo "进程:   ✅ 运行中 (PID=$PID)"
-      echo "启动时间: $(ps -o lstart= -p "$PID" 2>/dev/null | sed 's/^ *//')"
-    else
-      echo "进程:   ❌ PID 文件存在但进程已退出"
-    fi
+  echo "项目:   $PROJECT_NAME"
+  echo "PID文件: $PID_FILE"
+  local p
+  p="$(read_pid_file "$PID_FILE" 2>/dev/null || true)"
+  if pid_alive "$p"; then
+    echo "进程:   ✅ PID $p"
+  elif [ -n "$p" ]; then
+    echo "进程:   ❌ PID 文件存在但进程已退出"
   else
     echo "进程:   ❌ 未运行（无 PID 文件）"
   fi
-
-  # status 只展示、不杀：按本项目 cwd+boot.cjs 精确匹配，避免扫到别的项目
-  extra="$(ps -eo pid,args | awk -v root="$ROOT" '
+  local extra extra_other=""
+  extra="$(ps -eo pid,args 2>/dev/null | awk -v root="$ROOT" '
     $0 ~ /boot\.cjs/ && $0 ~ /node/ && index($0, root) { print $1 }
-  ')"
-  extra_other=""
-  for p in $extra; do
-    if [ "$p" != "${PID:-}" ]; then extra_other="$extra_other $p"; fi
+  ' || true)"
+  for p2 in $extra; do
+    if [ "$p2" != "${p:-}" ]; then extra_other="$extra_other $p2"; fi
   done
   extra_other="$(echo "$extra_other" | xargs)"
   if [ -n "$extra_other" ]; then
     echo "进程:   ⚠️  发现未记录在 PID 文件的进程: $extra_other"
   fi
-
   if curl -sf -m 5 "http://127.0.0.1:$port/api/status" > /dev/null 2>&1; then
     echo "HTTP:   ✅ http://127.0.0.1:$port/api/status 正常"
     curl -s -m 5 "http://127.0.0.1:$port/api/status" 2>/dev/null | head -c 200
@@ -184,12 +209,9 @@ status_server() {
   else
     echo "HTTP:   ❌ http://127.0.0.1:$port/api/status 无响应"
   fi
-
-  echo "日志:   $LOG_FILE (tail -f 查看)"
+  echo "日志:   $LOG_FILE"
 }
 
-# ---------- 参数解析 ----------
-# --set-password 作为独立操作
 if [ "${1:-}" = "--set-password" ]; then
   if [ -z "${2:-}" ]; then
     echo "❌ 请提供新密码: --set-password \"新密码\""
@@ -200,17 +222,13 @@ if [ "${1:-}" = "--set-password" ]; then
   exit 0
 fi
 
-# 判断命令（第一个参数），空参数默认 restart
 CMD="${1:-restart}"
 if [ "$CMD" = "--port" ]; then
-  # 兼容旧用法：直接以 --port 开头，视为 restart
   CMD="restart"
-  shift
 elif [ "$CMD" = "start" ] || [ "$CMD" = "stop" ] || [ "$CMD" = "restart" ] || [ "$CMD" = "status" ]; then
-  shift   # 去掉命令，剩余参数留给 start
+  shift
 else
-  # 未知参数，当做 start 并保留所有参数（可能是旧用法）
-  CMD="start"
+  CMD="restart"
 fi
 
 case "$CMD" in
@@ -221,7 +239,6 @@ case "$CMD" in
   *)
     echo "❌ 未知命令: $CMD"
     echo "可用命令: start, stop, restart, status"
-    echo "旧用法: --port PORT 或 --set-password PASSWORD"
     exit 1
     ;;
 esac
